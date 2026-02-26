@@ -1,5 +1,7 @@
 # Wez's Terminal
 
+[中文版 README](README.zh.md)
+
 <img height="128" alt="WezTerm Icon" src="https://raw.githubusercontent.com/wezterm/wezterm/main/assets/icon/wezterm-icon.svg" align="left"> *A GPU-accelerated cross-platform terminal emulator and multiplexer written by <a href="https://github.com/wez">@wez</a> and implemented in <a href="https://www.rust-lang.org/">Rust</a>*
 
 User facing docs and guide at: https://wezterm.org/
@@ -7,6 +9,50 @@ User facing docs and guide at: https://wezterm.org/
 ![Screenshot](docs/screenshots/two.png)
 
 *Screenshot of wezterm on macOS, running vim*
+
+## Highlight: Clipboard Image Paste over SSH
+
+**Paste screenshots directly into your remote SSH session with a single keystroke.**
+
+When you're working on a remote server via SSH and need to share a screenshot
+or image with a CLI tool (such as [Claude Code](https://docs.anthropic.com/en/docs/claude-code)),
+WezTerm can read the image from your local Windows clipboard, convert it to
+PNG, upload it to the remote server via SFTP or SCP, and paste the remote file
+path into the terminal — all in one action.
+
+### Quick Setup
+
+Add this to your `~/.wezterm.lua`:
+
+```lua
+local wezterm = require 'wezterm'
+
+return {
+  keys = {
+    {
+      key = 'v',
+      mods = 'CTRL',
+      action = wezterm.action.PasteImageToSshUpload,
+    },
+  },
+}
+```
+
+### How It Works
+
+1. Copy or screenshot an image to your clipboard
+2. Press `Ctrl+V` (or your configured key) in an SSH pane
+3. WezTerm automatically:
+   - Reads the image from the Windows clipboard
+   - Converts it to PNG format
+   - Uploads it to the remote server via SFTP (or SCP as fallback)
+   - Pastes the remote file path (e.g. `/tmp/wezterm-paste-1709012345.png`)
+
+This is especially useful with AI coding assistants like Claude Code that can
+read images from file paths but cannot access your local clipboard over SSH.
+
+See the full documentation:
+[PasteImageToSshUpload](https://wezterm.org/config/lua/keyassignment/PasteImageToSshUpload.html)
 
 ## Installation
 
