@@ -362,6 +362,9 @@ async fn paste_image_to_ssh_inner(
         );
     }
 
+    // Display the image inline using iTerm2 protocol before pasting the path
+    display_image_inline(pane_id, &png_data);
+
     // Paste the remote path into the terminal
     let pane = mux
         .get_pane(pane_id)
@@ -376,6 +379,33 @@ async fn paste_image_to_ssh_inner(
     );
 
     Ok(())
+}
+
+/// Display an image inline in the terminal using the iTerm2 inline image protocol.
+fn display_image_inline(pane_id: PaneId, png_data: &[u8]) {
+    use termwiz::escape::osc::{ITermDimension, ITermFileData, ITermProprietary};
+    use termwiz::escape::{Action, OperatingSystemCommand};
+
+    let file_data = ITermFileData {
+        name: None,
+        size: Some(png_data.len()),
+        width: ITermDimension::Automatic,
+        height: ITermDimension::Automatic,
+        preserve_aspect_ratio: true,
+        inline: true,
+        do_not_move_cursor: false,
+        data: png_data.to_vec(),
+    };
+
+    let action = Action::OperatingSystemCommand(Box::new(
+        OperatingSystemCommand::ITermProprietary(ITermProprietary::File(Box::new(file_data))),
+    ));
+
+    let mux = Mux::get();
+    if let Some(pane) = mux.get_pane(pane_id) {
+        pane.perform_actions(vec![action]);
+        log::info!("display_image_inline: injected iTerm2 inline image for pane {}", pane_id);
+    }
 }
 
 fn convert_dib_to_png(dib_data: &[u8]) -> anyhow::Result<Vec<u8>> {
