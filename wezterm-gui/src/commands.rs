@@ -673,6 +673,14 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &["Edit"],
             icon: Some("md_content_paste"),
         },
+        PasteImageToSshUpload => CommandDef {
+            brief: "Paste image to remote SSH".into(),
+            doc: "Uploads clipboard image to remote server via SFTP and pastes the remote file path".into(),
+            keys: vec![],
+            args: &[ArgType::ActivePane],
+            menubar: &["Edit"],
+            icon: Some("md_image"),
+        },
         ToggleFullScreen => CommandDef {
             brief: "Toggle full screen mode".into(),
             doc: "Switch between normal and full screen mode".into(),
@@ -2047,6 +2055,7 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         CopyTo(ClipboardCopyDestination::PrimarySelection),
         CopyTo(ClipboardCopyDestination::Clipboard),
         PasteFrom(ClipboardPasteSource::Clipboard),
+        PasteImageToSshUpload,
         ClearScrollback(ScrollbackEraseMode::ScrollbackOnly),
         ClearScrollback(ScrollbackEraseMode::ScrollbackAndViewport),
         QuickSelect,

@@ -319,6 +319,14 @@ pub trait WindowOps {
     /// Set some text in the clipboard
     fn set_clipboard(&self, clipboard: Clipboard, text: String);
 
+    /// Retrieve image data from the clipboard as raw DIB bytes.
+    /// Only supported on Windows; other platforms return an error.
+    fn get_clipboard_image_data(&self) -> Future<Vec<u8>> {
+        Future::result(Err(anyhow::anyhow!(
+            "Clipboard image paste is only supported on Windows"
+        )))
+    }
+
     /// Set window level. Depending on the environment and user preferences
     fn set_window_level(&self, _level: WindowLevel) {}
 
