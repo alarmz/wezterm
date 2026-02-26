@@ -283,10 +283,19 @@ async fn paste_image_to_ssh_inner(
             remote_path
         );
 
+        use wezterm_ssh::{OpenFileType, OpenOptions, WriteMode};
         let mut file = sftp
-            .create(&remote_path)
+            .open_with_mode(
+                &remote_path,
+                OpenOptions {
+                    read: false,
+                    write: Some(WriteMode::Append),
+                    mode: 0o644,
+                    ty: OpenFileType::File,
+                },
+            )
             .await
-            .map_err(|e| anyhow::anyhow!("SFTP create '{}' failed: {}", remote_path, e))?;
+            .map_err(|e| anyhow::anyhow!("SFTP open '{}' failed: {}", remote_path, e))?;
 
         use smol::io::AsyncWriteExt;
         file.write_all(&png_data)
