@@ -3,8 +3,13 @@
 *Since: nightly builds only*
 
 Reads an image from the Windows clipboard, converts it to PNG format, uploads
-it to the remote server via SFTP, and pastes the remote file path into the
-current pane.
+it to the remote server via SFTP (or SCP as fallback), and pastes the remote
+file path into the current pane.
+
+A small inline thumbnail of the image is displayed in the terminal using the
+iTerm2 inline image protocol before the path is pasted. The thumbnail is
+pre-resized to fit within a compact area (approximately 6 rows) so it does
+not clutter the terminal.
 
 This action is designed for use when connected to a remote host via an SSH
 domain and you want to share a screenshot or clipboard image with a remote
@@ -18,11 +23,18 @@ The feature can be disabled via
 
 **Requirements:**
 * Windows only (other platforms will show a toast notification)
-* The current pane must be in an SSH domain (not a local pane)
+* The current pane must be connected via SSH (either an SSH domain or a
+  detected `ssh` process)
 * The clipboard must contain image data
 
+**Upload methods:**
+* **SFTP** — used when the pane belongs to a `RemoteSshDomain`
+* **SCP** — used as fallback when SSH is detected via process inspection.
+  SCP uses `BatchMode=yes`, so passwordless authentication (SSH key or agent)
+  is required.
+
 **Error handling:** If any step fails (no image in clipboard, not an SSH pane,
-SFTP write error), a toast notification is shown with the error message.
+SFTP/SCP write error), a toast notification is shown with the error message.
 
 ```lua
 local wezterm = require 'wezterm'

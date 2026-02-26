@@ -800,6 +800,95 @@ mod tests {
         assert_eq!(w, 4); // clamped minimum
     }
 
+    // --- create_thumbnail_png tests ---
+
+    /// Helper: create a real PNG in memory with the given dimensions and a
+    /// solid colour, using the `image` crate.
+    fn make_test_png(width: u32, height: u32) -> Vec<u8> {
+        let img = image::RgbaImage::from_pixel(
+            width,
+            height,
+            image::Rgba([0xFF, 0x00, 0x00, 0xFF]),
+        );
+        let mut buf = Vec::new();
+        let encoder = image::codecs::png::PngEncoder::new(&mut buf);
+        image::ImageEncoder::write_image(
+            encoder,
+            img.as_raw(),
+            width,
+            height,
+            image::ExtendedColorType::Rgba8,
+        )
+        .expect("encode test PNG");
+        buf
+    }
+
+    #[test]
+    fn test_create_thumbnail_png_downscales_large_image() {
+        let png = make_test_png(1920, 1080);
+        let thumb = create_thumbnail_png(&png, 320, 96).expect("should create thumbnail");
+
+        // Verify it is a valid PNG
+        assert_eq!(&thumb[..8], b"\x89PNG\r\n\x1a\n");
+
+        let img = image::load_from_memory(&thumb).expect("should decode thumbnail");
+        // Must fit within 320x96, preserving aspect ratio
+        assert!(img.width() <= 320, "width={}", img.width());
+        assert!(img.height() <= 96, "height={}", img.height());
+        // Should actually be resized, not the original 1920x1080
+        assert!(img.width() < 1920);
+        assert!(img.height() < 1080);
+    }
+
+    #[test]
+    fn test_create_thumbnail_png_no_upscale_small_image() {
+        let png = make_test_png(50, 30);
+        let thumb = create_thumbnail_png(&png, 320, 96).expect("should create thumbnail");
+
+        let img = image::load_from_memory(&thumb).expect("should decode thumbnail");
+        // Image is already smaller than max — should not be upscaled
+        assert_eq!(img.width(), 50);
+        assert_eq!(img.height(), 30);
+    }
+
+    #[test]
+    fn test_create_thumbnail_png_preserves_aspect_ratio() {
+        // 1000x500 → max 320x96 → height is the constraint (500→96), so
+        // width should scale proportionally: 1000 * 96/500 = 192
+        let png = make_test_png(1000, 500);
+        let thumb = create_thumbnail_png(&png, 320, 96).expect("should create thumbnail");
+
+        let img = image::load_from_memory(&thumb).expect("should decode thumbnail");
+        assert!(img.width() <= 320);
+        assert!(img.height() <= 96);
+        // Aspect ratio should be roughly 2:1
+        let aspect = img.width() as f64 / img.height() as f64;
+        assert!(
+            (aspect - 2.0).abs() < 0.15,
+            "aspect={} (expected ~2.0)",
+            aspect
+        );
+    }
+
+    #[test]
+    fn test_create_thumbnail_png_invalid_data() {
+        let result = create_thumbnail_png(b"not a png", 320, 96);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_create_thumbnail_png_square_image() {
+        let png = make_test_png(2000, 2000);
+        let thumb = create_thumbnail_png(&png, 320, 96).expect("should create thumbnail");
+
+        let img = image::load_from_memory(&thumb).expect("should decode thumbnail");
+        // Height-constrained: 2000→96, width should also be 96
+        assert!(img.width() <= 96);
+        assert!(img.height() <= 96);
+        // Should be roughly square
+        assert_eq!(img.width(), img.height());
+    }
+
     /// Build a minimal 32-bit BITMAPINFOHEADER (40 bytes) + pixel data for a
     /// 2x2 BGRA image. This simulates what Windows puts on the clipboard as
     /// CF_DIB.
