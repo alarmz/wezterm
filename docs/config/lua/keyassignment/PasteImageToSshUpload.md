@@ -6,11 +6,6 @@ Reads an image from the Windows clipboard, converts it to PNG format, uploads
 it to the remote server via SFTP (or SCP as fallback), and pastes the remote
 file path into the current pane.
 
-A small inline thumbnail of the image is displayed in the terminal using the
-iTerm2 inline image protocol before the path is pasted. The thumbnail is
-pre-resized to fit within a compact area (approximately 6 rows) so it does
-not clutter the terminal.
-
 This action is designed for use when connected to a remote host via an SSH
 domain and you want to share a screenshot or clipboard image with a remote
 application (such as Claude Code) that can read images from file paths.
