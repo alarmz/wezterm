@@ -232,6 +232,8 @@ fn upload_via_scp(
     let remote_dest = format!("{}:{}", target.user_host, remote_path);
     let mut cmd = std::process::Command::new("scp");
     cmd.arg("-q"); // quiet mode
+    // BatchMode prevents interactive password/passphrase prompts (GUI dialogs on Windows)
+    cmd.arg("-o").arg("BatchMode=yes");
     if let Some(port) = target.port {
         cmd.arg("-P").arg(port.to_string());
     }
@@ -256,7 +258,16 @@ fn upload_via_scp(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("scp failed (exit {}): {}", output.status, stderr.trim());
+        anyhow::bail!(
+            "scp failed (exit {}): {}\n\
+             Hint: SCP requires passwordless authentication. \
+             Make sure your SSH key is loaded in the agent:\n  \
+             ssh-add ~/.ssh/id_rsa\n\
+             Or on Windows:\n  \
+             Start-Service ssh-agent; ssh-add",
+            output.status,
+            stderr.trim()
+        );
     }
 
     log::info!("upload_via_scp: success");
@@ -390,7 +401,7 @@ fn display_image_inline(pane_id: PaneId, png_data: &[u8]) {
         name: None,
         size: Some(png_data.len()),
         width: ITermDimension::Automatic,
-        height: ITermDimension::Automatic,
+        height: ITermDimension::Cells(20),
         preserve_aspect_ratio: true,
         inline: true,
         do_not_move_cursor: false,
