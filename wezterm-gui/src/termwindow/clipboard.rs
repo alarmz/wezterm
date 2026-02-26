@@ -408,30 +408,92 @@ async fn paste_image_to_ssh_inner(
     Ok(())
 }
 
-/// Display an image inline in the terminal using the iTerm2 inline image protocol.
+/// Display an image as a small inline thumbnail using the iTerm2 protocol.
+/// Dynamically computes cell dimensions from the image aspect ratio so the
+/// thumbnail is compact and does not clutter the terminal.
 fn display_image_inline(pane_id: PaneId, png_data: &[u8]) {
+    use mux::MuxNotification;
     use termwiz::escape::osc::{ITermDimension, ITermFileData, ITermProprietary};
     use termwiz::escape::{Action, OperatingSystemCommand};
+
+    let (img_w, img_h) = parse_png_dimensions(png_data).unwrap_or((800, 600));
+    let (thumb_w, thumb_h) = compute_thumbnail_cells(img_w, img_h);
+    log::info!(
+        "display_image_inline: image {}x{} -> thumbnail {}x{} cells",
+        img_w, img_h, thumb_w, thumb_h
+    );
 
     let file_data = ITermFileData {
         name: None,
         size: Some(png_data.len()),
-        width: ITermDimension::Automatic,
-        height: ITermDimension::Cells(20),
+        width: ITermDimension::Cells(thumb_w),
+        height: ITermDimension::Cells(thumb_h),
         preserve_aspect_ratio: true,
         inline: true,
         do_not_move_cursor: false,
         data: png_data.to_vec(),
     };
 
-    let action = Action::OperatingSystemCommand(Box::new(
+    let image_action = Action::OperatingSystemCommand(Box::new(
         OperatingSystemCommand::ITermProprietary(ITermProprietary::File(Box::new(file_data))),
     ));
 
     let mux = Mux::get();
     if let Some(pane) = mux.get_pane(pane_id) {
-        pane.perform_actions(vec![action]);
-        log::info!("display_image_inline: injected iTerm2 inline image for pane {}", pane_id);
+        // Inject image followed by a newline so the cursor lands on a clean
+        // line below the thumbnail — this prevents the user from "losing"
+        // the cursor inside or behind the image.
+        let mut actions = vec![image_action];
+        let mut parser = termwiz::escape::parser::Parser::new();
+        parser.parse(b"\r\n", |action| actions.push(action));
+        pane.perform_actions(actions);
+
+        // Notify the mux so the GUI refreshes and scrolls to show the cursor.
+        mux.notify(MuxNotification::PaneOutput(pane_id));
+        log::info!(
+            "display_image_inline: injected iTerm2 inline image for pane {}",
+            pane_id
+        );
+    }
+}
+
+/// Parse the IHDR chunk of a PNG to extract (width, height).
+fn parse_png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    // PNG layout: 8‑byte signature, then IHDR chunk:
+    //   4 bytes length + 4 bytes "IHDR" + 4 bytes width + 4 bytes height …
+    if data.len() < 24 {
+        return None;
+    }
+    if &data[..8] != b"\x89PNG\r\n\x1a\n" {
+        return None;
+    }
+    let w = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+    let h = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+    Some((w, h))
+}
+
+/// Compute a compact thumbnail size in terminal cells.
+///
+/// Terminal cells are roughly 2× taller than wide (e.g. 8×16 px), so we
+/// account for that when converting the image aspect ratio into cell counts.
+fn compute_thumbnail_cells(img_w: u32, img_h: u32) -> (i64, i64) {
+    const MAX_H: i64 = 6;
+    const MAX_W: i64 = 40;
+    const CELL_ASPECT: f64 = 2.0; // cell_height_px / cell_width_px
+
+    let aspect = img_w as f64 / img_h.max(1) as f64;
+
+    // Width (in cells) needed when height = MAX_H:
+    //   w_cells = h_cells × CELL_ASPECT × (img_w / img_h)
+    let w_at_max_h = (MAX_H as f64 * CELL_ASPECT * aspect).round() as i64;
+
+    if w_at_max_h <= MAX_W {
+        // Height‑constrained — fits within MAX_W
+        (w_at_max_h.max(4), MAX_H)
+    } else {
+        // Width‑constrained — recalculate height
+        let h = (MAX_W as f64 / (CELL_ASPECT * aspect)).round() as i64;
+        (MAX_W, h.clamp(2, MAX_H))
     }
 }
 
@@ -630,6 +692,77 @@ mod tests {
         let target = parse_ssh_target_from_argv(&argv).unwrap();
         assert_eq!(target.user_host, "host");
         assert_eq!(target.identity_files, vec!["key1", "key2"]);
+    }
+
+    // --- PNG dimension parsing tests ---
+
+    fn make_minimal_png_header(width: u32, height: u32) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"\x89PNG\r\n\x1a\n"); // signature
+        data.extend_from_slice(&13u32.to_be_bytes()); // IHDR data length
+        data.extend_from_slice(b"IHDR");
+        data.extend_from_slice(&width.to_be_bytes());
+        data.extend_from_slice(&height.to_be_bytes());
+        data.extend_from_slice(&[8, 2, 0, 0, 0]); // depth, color, etc.
+        data
+    }
+
+    #[test]
+    fn test_parse_png_dimensions_valid() {
+        let data = make_minimal_png_header(1920, 1080);
+        assert_eq!(parse_png_dimensions(&data), Some((1920, 1080)));
+    }
+
+    #[test]
+    fn test_parse_png_dimensions_too_short() {
+        assert_eq!(parse_png_dimensions(&[0; 10]), None);
+    }
+
+    #[test]
+    fn test_parse_png_dimensions_bad_signature() {
+        assert_eq!(parse_png_dimensions(&[0u8; 24]), None);
+    }
+
+    // --- Thumbnail cell computation tests ---
+
+    #[test]
+    fn test_thumbnail_landscape_16_9() {
+        let (w, h) = compute_thumbnail_cells(1920, 1080);
+        assert_eq!(h, 6);
+        // 6 * 2 * (1920/1080) ≈ 21
+        assert!(w >= 20 && w <= 22, "w={}", w);
+    }
+
+    #[test]
+    fn test_thumbnail_square() {
+        let (w, h) = compute_thumbnail_cells(800, 800);
+        assert_eq!(h, 6);
+        // 6 * 2 * 1 = 12
+        assert_eq!(w, 12);
+    }
+
+    #[test]
+    fn test_thumbnail_portrait() {
+        let (w, h) = compute_thumbnail_cells(1080, 1920);
+        assert_eq!(h, 6);
+        // 6 * 2 * (1080/1920) ≈ 6.75 → 7, but clamped min 4
+        assert!(w >= 4 && w <= 8, "w={}", w);
+    }
+
+    #[test]
+    fn test_thumbnail_very_wide() {
+        // Panorama — should be width-constrained
+        let (w, h) = compute_thumbnail_cells(10000, 500);
+        assert_eq!(w, 40);
+        assert!(h >= 2 && h <= 6, "h={}", h);
+    }
+
+    #[test]
+    fn test_thumbnail_very_tall() {
+        // Very tall image — height-constrained, narrow width clamped to min 4
+        let (w, h) = compute_thumbnail_cells(200, 4000);
+        assert_eq!(h, 6);
+        assert_eq!(w, 4); // clamped minimum
     }
 
     /// Build a minimal 32-bit BITMAPINFOHEADER (40 bytes) + pixel data for a
