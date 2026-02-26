@@ -107,6 +107,12 @@ struct SshTarget {
     user_host: String,
     /// Optional port from -p flag
     port: Option<u16>,
+    /// Identity files from -i flags (forwarded to scp)
+    identity_files: Vec<String>,
+    /// Config file from -F flag (forwarded to scp)
+    config_file: Option<String>,
+    /// Extra -o options (forwarded to scp)
+    extra_options: Vec<String>,
 }
 
 /// Detect SSH target by inspecting the foreground process in the pane.
@@ -142,7 +148,8 @@ fn find_ssh_target_in_process_tree(info: &procinfo::LocalProcessInfo) -> Option<
     None
 }
 
-/// Parse SSH command-line arguments to extract the destination and port.
+/// Parse SSH command-line arguments to extract the destination, port,
+/// and authentication-related options to forward to scp.
 fn parse_ssh_target_from_argv(argv: &[String]) -> Option<SshTarget> {
     // SSH options that consume the next argument as their value
     const OPTS_WITH_ARG: &[&str] = &[
@@ -151,6 +158,9 @@ fn parse_ssh_target_from_argv(argv: &[String]) -> Option<SshTarget> {
     ];
 
     let mut port: Option<u16> = None;
+    let mut identity_files: Vec<String> = Vec::new();
+    let mut config_file: Option<String> = None;
+    let mut extra_options: Vec<String> = Vec::new();
     let mut i = 1; // skip argv[0] ("ssh" / "ssh.exe")
 
     while i < argv.len() {
@@ -159,6 +169,21 @@ fn parse_ssh_target_from_argv(argv: &[String]) -> Option<SshTarget> {
             i += 1;
             if i < argv.len() {
                 port = argv[i].parse().ok();
+            }
+        } else if arg == "-i" {
+            i += 1;
+            if i < argv.len() {
+                identity_files.push(argv[i].clone());
+            }
+        } else if arg == "-F" {
+            i += 1;
+            if i < argv.len() {
+                config_file = Some(argv[i].clone());
+            }
+        } else if arg == "-o" {
+            i += 1;
+            if i < argv.len() {
+                extra_options.push(argv[i].clone());
             }
         } else if OPTS_WITH_ARG.iter().any(|opt| arg == *opt) {
             i += 1; // skip the option's argument
@@ -169,6 +194,9 @@ fn parse_ssh_target_from_argv(argv: &[String]) -> Option<SshTarget> {
             return Some(SshTarget {
                 user_host: arg.clone(),
                 port,
+                identity_files,
+                config_file,
+                extra_options,
             });
         }
         i += 1;
@@ -207,10 +235,20 @@ fn upload_via_scp(
     if let Some(port) = target.port {
         cmd.arg("-P").arg(port.to_string());
     }
+    // Forward SSH authentication options from the running ssh process
+    for identity in &target.identity_files {
+        cmd.arg("-i").arg(identity);
+    }
+    if let Some(config) = &target.config_file {
+        cmd.arg("-F").arg(config);
+    }
+    for opt in &target.extra_options {
+        cmd.arg("-o").arg(opt);
+    }
     cmd.arg(local_path.to_str().unwrap_or_default())
         .arg(&remote_dest);
 
-    log::info!("upload_via_scp: running: scp {} -> {}", local_path.display(), remote_dest);
+    log::info!("upload_via_scp: running: {:?}", cmd);
     let output = cmd.output().context("Failed to run scp command. Is scp installed?")?;
 
     // Always clean up the temp file
@@ -478,6 +516,63 @@ mod tests {
     fn test_parse_ssh_empty_argv() {
         let argv: Vec<String> = vec!["ssh".into()];
         assert!(parse_ssh_target_from_argv(&argv).is_none());
+    }
+
+    #[test]
+    fn test_parse_ssh_with_identity_file() {
+        let argv = vec![
+            "ssh".into(),
+            "-i".into(),
+            "/home/user/.ssh/my_key".into(),
+            "user@host".into(),
+        ];
+        let target = parse_ssh_target_from_argv(&argv).unwrap();
+        assert_eq!(target.user_host, "user@host");
+        assert_eq!(target.identity_files, vec!["/home/user/.ssh/my_key"]);
+        assert_eq!(target.config_file, None);
+        assert!(target.extra_options.is_empty());
+    }
+
+    #[test]
+    fn test_parse_ssh_with_config_and_options() {
+        let argv = vec![
+            "ssh".into(),
+            "-F".into(),
+            "/etc/ssh/custom_config".into(),
+            "-o".into(),
+            "StrictHostKeyChecking=no".into(),
+            "-o".into(),
+            "UserKnownHostsFile=/dev/null".into(),
+            "-i".into(),
+            "~/.ssh/id_ed25519".into(),
+            "-p".into(),
+            "2222".into(),
+            "deploy@prod.example.com".into(),
+        ];
+        let target = parse_ssh_target_from_argv(&argv).unwrap();
+        assert_eq!(target.user_host, "deploy@prod.example.com");
+        assert_eq!(target.port, Some(2222));
+        assert_eq!(target.identity_files, vec!["~/.ssh/id_ed25519"]);
+        assert_eq!(target.config_file, Some("/etc/ssh/custom_config".into()));
+        assert_eq!(
+            target.extra_options,
+            vec!["StrictHostKeyChecking=no", "UserKnownHostsFile=/dev/null"]
+        );
+    }
+
+    #[test]
+    fn test_parse_ssh_multiple_identity_files() {
+        let argv = vec![
+            "ssh".into(),
+            "-i".into(),
+            "key1".into(),
+            "-i".into(),
+            "key2".into(),
+            "host".into(),
+        ];
+        let target = parse_ssh_target_from_argv(&argv).unwrap();
+        assert_eq!(target.user_host, "host");
+        assert_eq!(target.identity_files, vec!["key1", "key2"]);
     }
 
     /// Build a minimal 32-bit BITMAPINFOHEADER (40 bytes) + pixel data for a
