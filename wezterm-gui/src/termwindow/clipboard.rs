@@ -234,6 +234,14 @@ fn upload_via_scp(
     cmd.arg("-q"); // quiet mode
     // BatchMode prevents interactive password/passphrase prompts (GUI dialogs on Windows)
     cmd.arg("-o").arg("BatchMode=yes");
+    // Prevent stdin-based prompting and suppress console window on Windows
+    cmd.stdin(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     if let Some(port) = target.port {
         cmd.arg("-P").arg(port.to_string());
     }
@@ -259,14 +267,22 @@ fn upload_via_scp(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!(
-            "scp failed (exit {}): {}\n\
-             Hint: SCP requires passwordless authentication. \
-             Make sure your SSH key is loaded in the agent:\n  \
-             ssh-add ~/.ssh/id_rsa\n\
-             Or on Windows:\n  \
-             Start-Service ssh-agent; ssh-add",
+            "scp failed (exit {}): {}\n\n\
+             SCP opens a NEW SSH connection that requires key-based auth.\n\
+             Set up SSH keys (one-time):\n\
+             \n  \
+             1. Generate key:  ssh-keygen -t ed25519\n  \
+             2. Copy to remote: ssh-copy-id {}\n  \
+             3. Verify: ssh {}  (should not ask for password)\n\
+             \n\
+             On Windows, also ensure ssh-agent is running:\n  \
+             Get-Service ssh-agent | Set-Service -StartupType Automatic\n  \
+             Start-Service ssh-agent\n  \
+             ssh-add",
             output.status,
-            stderr.trim()
+            stderr.trim(),
+            target.user_host,
+            target.user_host,
         );
     }
 
