@@ -408,30 +408,65 @@ async fn paste_image_to_ssh_inner(
     Ok(())
 }
 
+/// Pre-resize a PNG image so that it fits within `max_width` x `max_height`
+/// pixels, preserving aspect ratio.  Returns the resized PNG bytes, or `None`
+/// if decoding/encoding fails.
+fn create_thumbnail_png(png_data: &[u8], max_width: u32, max_height: u32) -> Option<Vec<u8>> {
+    let img = image::load_from_memory(png_data).ok()?;
+    let resized = if img.width() > max_width || img.height() > max_height {
+        img.resize(max_width, max_height, image::imageops::FilterType::Triangle)
+    } else {
+        img
+    };
+    let mut buf = Vec::new();
+    let encoder = image::codecs::png::PngEncoder::new(&mut buf);
+    resized.write_with_encoder(encoder).ok()?;
+    Some(buf)
+}
+
 /// Display an image as a small inline thumbnail using the iTerm2 protocol.
-/// Dynamically computes cell dimensions from the image aspect ratio so the
-/// thumbnail is compact and does not clutter the terminal.
+///
+/// The image is **pre-resized** to a small pixel size before injection because
+/// WezTerm's iTerm2 handler does not resample PNG images — it passes the
+/// original bytes through to the renderer.  Setting small cell dimensions with
+/// full-resolution data would cause the image to be cropped rather than scaled.
+/// By resizing first and using `Automatic` dimensions, the renderer displays
+/// the (now small) image at its native pixel size.
 fn display_image_inline(pane_id: PaneId, png_data: &[u8]) {
     use mux::MuxNotification;
     use termwiz::escape::osc::{ITermDimension, ITermFileData, ITermProprietary};
     use termwiz::escape::{Action, OperatingSystemCommand};
 
+    // Pre-resize to a small thumbnail.  Target pixel size is derived from
+    // cell counts so the thumbnail occupies roughly the same area as before.
+    // Assume ~8px wide, ~16px tall per cell → max 320×96 pixels.
     let (img_w, img_h) = parse_png_dimensions(png_data).unwrap_or((800, 600));
     let (thumb_w, thumb_h) = compute_thumbnail_cells(img_w, img_h);
+    let max_px_w = (thumb_w as u32) * 8;
+    let max_px_h = (thumb_h as u32) * 16;
+
+    let thumb_data = match create_thumbnail_png(png_data, max_px_w, max_px_h) {
+        Some(d) => d,
+        None => {
+            log::warn!("display_image_inline: failed to create thumbnail, skipping");
+            return;
+        }
+    };
+
     log::info!(
-        "display_image_inline: image {}x{} -> thumbnail {}x{} cells",
-        img_w, img_h, thumb_w, thumb_h
+        "display_image_inline: image {}x{} -> thumbnail {}x{} cells ({}x{} px, {} bytes)",
+        img_w, img_h, thumb_w, thumb_h, max_px_w, max_px_h, thumb_data.len()
     );
 
     let file_data = ITermFileData {
         name: None,
-        size: Some(png_data.len()),
-        width: ITermDimension::Cells(thumb_w),
-        height: ITermDimension::Cells(thumb_h),
+        size: Some(thumb_data.len()),
+        width: ITermDimension::Automatic,
+        height: ITermDimension::Automatic,
         preserve_aspect_ratio: true,
         inline: true,
         do_not_move_cursor: false,
-        data: png_data.to_vec(),
+        data: thumb_data,
     };
 
     let image_action = Action::OperatingSystemCommand(Box::new(
