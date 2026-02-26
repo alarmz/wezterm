@@ -2,7 +2,7 @@ use crate::termwindow::TermWindowNotif;
 use crate::TermWindow;
 use anyhow::Context;
 use config::keyassignment::{ClipboardCopyDestination, ClipboardPasteSource};
-use mux::pane::{Pane, PaneId};
+use mux::pane::{CachePolicy, Pane, PaneId};
 use mux::ssh::RemoteSshDomain;
 use mux::Mux;
 use std::sync::Arc;
@@ -64,22 +64,34 @@ impl TermWindow {
     pub fn paste_image_to_ssh_upload(&mut self, pane: &Arc<dyn Pane>) {
         let config = config::configuration();
         if !config.ssh_image_paste_enabled {
+            log::debug!("paste_image_to_ssh_upload: disabled by config");
             return;
         }
 
         let pane_id = pane.pane_id();
         let domain_id = pane.domain_id();
-        let window = self.window.as_ref().unwrap().clone();
+        log::info!(
+            "paste_image_to_ssh_upload: pane_id={}, domain_id={}",
+            pane_id,
+            domain_id
+        );
 
+        // Detect SSH target from foreground process before entering async context
+        let ssh_target = detect_ssh_target_from_pane(pane);
+        log::info!(
+            "paste_image_to_ssh_upload: detected ssh_target={:?}",
+            ssh_target
+        );
+
+        let window = self.window.as_ref().unwrap().clone();
         let future = window.get_clipboard_image_data();
 
         promise::spawn::spawn(async move {
-            if let Err(err) = paste_image_to_ssh_inner(future, pane_id, domain_id).await {
+            if let Err(err) =
+                paste_image_to_ssh_inner(future, pane_id, domain_id, ssh_target).await
+            {
                 log::error!("paste_image_to_ssh: {:#}", err);
-                persistent_toast_notification(
-                    "Image Paste Failed",
-                    &format!("{:#}", err),
-                );
+                persistent_toast_notification("Image Paste Failed", &format!("{:#}", err));
             }
         })
         .detach();
@@ -88,27 +100,157 @@ impl TermWindow {
     }
 }
 
+/// Parsed SSH connection target detected from a running ssh process.
+#[derive(Debug, Clone)]
+struct SshTarget {
+    /// The destination in "user@host" or "host" format
+    user_host: String,
+    /// Optional port from -p flag
+    port: Option<u16>,
+}
+
+/// Detect SSH target by inspecting the foreground process in the pane.
+fn detect_ssh_target_from_pane(pane: &Arc<dyn Pane>) -> Option<SshTarget> {
+    let proc_info = pane.get_foreground_process_info(CachePolicy::FetchImmediate)?;
+    log::info!(
+        "detect_ssh_target: foreground process name='{}', pid={}, argv={:?}",
+        proc_info.name,
+        proc_info.pid,
+        proc_info.argv
+    );
+    find_ssh_target_in_process_tree(&proc_info)
+}
+
+/// Recursively search process tree for an ssh process and extract the target.
+fn find_ssh_target_in_process_tree(info: &procinfo::LocalProcessInfo) -> Option<SshTarget> {
+    let name_lower = info.name.to_lowercase();
+    if name_lower == "ssh" || name_lower == "ssh.exe" {
+        if let Some(target) = parse_ssh_target_from_argv(&info.argv) {
+            log::info!(
+                "find_ssh_target: found ssh process pid={}, target={:?}",
+                info.pid,
+                target
+            );
+            return Some(target);
+        }
+    }
+    for child in info.children.values() {
+        if let Some(target) = find_ssh_target_in_process_tree(child) {
+            return Some(target);
+        }
+    }
+    None
+}
+
+/// Parse SSH command-line arguments to extract the destination and port.
+fn parse_ssh_target_from_argv(argv: &[String]) -> Option<SshTarget> {
+    // SSH options that consume the next argument as their value
+    const OPTS_WITH_ARG: &[&str] = &[
+        "-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J",
+        "-L", "-l", "-m", "-O", "-o", "-Q", "-R", "-S", "-W", "-w",
+    ];
+
+    let mut port: Option<u16> = None;
+    let mut i = 1; // skip argv[0] ("ssh" / "ssh.exe")
+
+    while i < argv.len() {
+        let arg = &argv[i];
+        if arg == "-p" {
+            i += 1;
+            if i < argv.len() {
+                port = argv[i].parse().ok();
+            }
+        } else if OPTS_WITH_ARG.iter().any(|opt| arg == *opt) {
+            i += 1; // skip the option's argument
+        } else if arg.starts_with('-') {
+            // standalone flags like -v, -N, -T, etc.
+        } else {
+            // first non-option argument is the destination
+            return Some(SshTarget {
+                user_host: arg.clone(),
+                port,
+            });
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Upload PNG data to the remote host via scp subprocess.
+fn upload_via_scp(
+    target: &SshTarget,
+    png_data: &[u8],
+    remote_path: &str,
+) -> anyhow::Result<()> {
+    // Save to local temp file
+    let temp_dir = std::env::temp_dir();
+    let local_filename = format!(
+        "wezterm-paste-{}-{}.png",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    let local_path = temp_dir.join(&local_filename);
+
+    log::info!(
+        "upload_via_scp: writing {} bytes to temp file '{}'",
+        png_data.len(),
+        local_path.display()
+    );
+    std::fs::write(&local_path, png_data).context("Failed to write temp PNG file")?;
+
+    let remote_dest = format!("{}:{}", target.user_host, remote_path);
+    let mut cmd = std::process::Command::new("scp");
+    cmd.arg("-q"); // quiet mode
+    if let Some(port) = target.port {
+        cmd.arg("-P").arg(port.to_string());
+    }
+    cmd.arg(local_path.to_str().unwrap_or_default())
+        .arg(&remote_dest);
+
+    log::info!("upload_via_scp: running: scp {} -> {}", local_path.display(), remote_dest);
+    let output = cmd.output().context("Failed to run scp command. Is scp installed?")?;
+
+    // Always clean up the temp file
+    let _ = std::fs::remove_file(&local_path);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("scp failed (exit {}): {}", output.status, stderr.trim());
+    }
+
+    log::info!("upload_via_scp: success");
+    Ok(())
+}
+
 async fn paste_image_to_ssh_inner(
     future: promise::Future<Vec<u8>>,
     pane_id: PaneId,
     domain_id: mux::domain::DomainId,
+    ssh_target: Option<SshTarget>,
 ) -> anyhow::Result<()> {
+    log::info!(
+        "paste_image_to_ssh_inner: starting, pane_id={}, domain_id={}, ssh_target={:?}",
+        pane_id,
+        domain_id,
+        ssh_target
+    );
+
+    log::info!("paste_image_to_ssh_inner: reading clipboard image data...");
     let dib_data = future.await.context("Failed to read clipboard image")?;
+    log::info!(
+        "paste_image_to_ssh_inner: got {} bytes of DIB data from clipboard",
+        dib_data.len()
+    );
 
+    log::info!("paste_image_to_ssh_inner: converting DIB to PNG...");
     let png_data = convert_dib_to_png(&dib_data).context("Failed to convert image to PNG")?;
-
-    let mux = Mux::get();
-    let domain = mux
-        .get_domain(domain_id)
-        .ok_or_else(|| anyhow::anyhow!("Domain not found"))?;
-
-    let ssh_domain = domain
-        .downcast_ref::<RemoteSshDomain>()
-        .ok_or_else(|| anyhow::anyhow!("Current pane is not an SSH session"))?;
-
-    let sftp = ssh_domain
-        .sftp()
-        .ok_or_else(|| anyhow::anyhow!("SSH session not connected"))?;
+    log::info!(
+        "paste_image_to_ssh_inner: converted to {} bytes of PNG data",
+        png_data.len()
+    );
 
     let config = config::configuration();
     let timestamp = std::time::SystemTime::now()
@@ -119,28 +261,70 @@ async fn paste_image_to_ssh_inner(
         .ssh_image_paste_remote_path
         .replace("{timestamp}", &timestamp.to_string());
 
-    let mut file = sftp
-        .create(&remote_path)
-        .await
-        .map_err(|e| anyhow::anyhow!("SFTP create failed: {}", e))?;
+    // Try RemoteSshDomain SFTP first, then fall back to SCP via detected SSH process
+    let mux = Mux::get();
+    let domain = mux
+        .get_domain(domain_id)
+        .ok_or_else(|| anyhow::anyhow!("Domain not found for domain_id={}", domain_id))?;
 
-    use smol::io::AsyncWriteExt;
-    file.write_all(&png_data)
-        .await
-        .context("SFTP write failed")?;
-    file.close()
-        .await
-        .context("SFTP close failed")?;
+    let domain_name = domain.domain_name().to_string();
+    log::info!("paste_image_to_ssh_inner: domain_name='{}'", domain_name);
 
+    if let Some(ssh_domain) = domain.downcast_ref::<RemoteSshDomain>() {
+        // Path 1: Direct SSH domain with SFTP
+        log::info!("paste_image_to_ssh_inner: using SFTP via RemoteSshDomain");
+        let sftp = ssh_domain
+            .sftp()
+            .ok_or_else(|| anyhow::anyhow!("SSH session not connected (no active session)"))?;
+
+        log::info!(
+            "paste_image_to_ssh_inner: SFTP uploading {} bytes to '{}'",
+            png_data.len(),
+            remote_path
+        );
+
+        let mut file = sftp
+            .create(&remote_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("SFTP create '{}' failed: {}", remote_path, e))?;
+
+        use smol::io::AsyncWriteExt;
+        file.write_all(&png_data)
+            .await
+            .context("SFTP write failed")?;
+        file.close().await.context("SFTP close failed")?;
+    } else if let Some(target) = ssh_target {
+        // Path 2: Local pane with ssh process detected — use scp
+        log::info!(
+            "paste_image_to_ssh_inner: using SCP to {}",
+            target.user_host
+        );
+
+        let png_clone = png_data.clone();
+        let path_clone = remote_path.clone();
+        let target_clone = target.clone();
+        smol::unblock(move || upload_via_scp(&target_clone, &png_clone, &path_clone))
+            .await
+            .context("SCP upload failed")?;
+    } else {
+        anyhow::bail!(
+            "Cannot upload image: domain '{}' is not a direct SSH session, \
+             and no ssh process was detected in the current pane. \
+             Please ensure you have an active SSH connection in this pane.",
+            domain_name
+        );
+    }
+
+    // Paste the remote path into the terminal
     let pane = mux
         .get_pane(pane_id)
-        .ok_or_else(|| anyhow::anyhow!("Pane not found"))?;
+        .ok_or_else(|| anyhow::anyhow!("Pane not found for pane_id={}", pane_id))?;
 
     pane.send_paste(&remote_path)
         .context("Failed to paste path into terminal")?;
 
     log::info!(
-        "Successfully uploaded clipboard image to {}",
+        "paste_image_to_ssh_inner: successfully uploaded clipboard image to '{}'",
         remote_path
     );
 
@@ -218,6 +402,74 @@ fn convert_dib_to_png(dib_data: &[u8]) -> anyhow::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_ssh_simple_user_host() {
+        let argv = vec!["ssh".into(), "user@host".into()];
+        let target = parse_ssh_target_from_argv(&argv).unwrap();
+        assert_eq!(target.user_host, "user@host");
+        assert_eq!(target.port, None);
+    }
+
+    #[test]
+    fn test_parse_ssh_host_only() {
+        let argv = vec!["ssh".into(), "myserver".into()];
+        let target = parse_ssh_target_from_argv(&argv).unwrap();
+        assert_eq!(target.user_host, "myserver");
+        assert_eq!(target.port, None);
+    }
+
+    #[test]
+    fn test_parse_ssh_with_port() {
+        let argv = vec!["ssh".into(), "-p".into(), "2222".into(), "user@host".into()];
+        let target = parse_ssh_target_from_argv(&argv).unwrap();
+        assert_eq!(target.user_host, "user@host");
+        assert_eq!(target.port, Some(2222));
+    }
+
+    #[test]
+    fn test_parse_ssh_with_identity_and_verbose() {
+        let argv = vec![
+            "ssh.exe".into(),
+            "-v".into(),
+            "-i".into(),
+            "~/.ssh/id_rsa".into(),
+            "admin@10.0.0.1".into(),
+        ];
+        let target = parse_ssh_target_from_argv(&argv).unwrap();
+        assert_eq!(target.user_host, "admin@10.0.0.1");
+        assert_eq!(target.port, None);
+    }
+
+    #[test]
+    fn test_parse_ssh_with_many_options() {
+        let argv = vec![
+            "ssh".into(),
+            "-o".into(),
+            "StrictHostKeyChecking=no".into(),
+            "-L".into(),
+            "8080:localhost:80".into(),
+            "-p".into(),
+            "22".into(),
+            "-N".into(),
+            "deploy@prod.example.com".into(),
+        ];
+        let target = parse_ssh_target_from_argv(&argv).unwrap();
+        assert_eq!(target.user_host, "deploy@prod.example.com");
+        assert_eq!(target.port, Some(22));
+    }
+
+    #[test]
+    fn test_parse_ssh_no_destination() {
+        let argv = vec!["ssh".into(), "-v".into()];
+        assert!(parse_ssh_target_from_argv(&argv).is_none());
+    }
+
+    #[test]
+    fn test_parse_ssh_empty_argv() {
+        let argv: Vec<String> = vec!["ssh".into()];
+        assert!(parse_ssh_target_from_argv(&argv).is_none());
+    }
 
     /// Build a minimal 32-bit BITMAPINFOHEADER (40 bytes) + pixel data for a
     /// 2x2 BGRA image. This simulates what Windows puts on the clipboard as
