@@ -304,16 +304,23 @@ async fn paste_image_to_ssh_inner(
     );
 
     log::info!("paste_image_to_ssh_inner: reading clipboard image data...");
-    let dib_data = future.await.context("Failed to read clipboard image")?;
+    let clipboard_data = future.await.context("Failed to read clipboard image")?;
     log::info!(
-        "paste_image_to_ssh_inner: got {} bytes of DIB data from clipboard",
-        dib_data.len()
+        "paste_image_to_ssh_inner: got {} bytes of image data from clipboard",
+        clipboard_data.len()
     );
 
-    log::info!("paste_image_to_ssh_inner: converting DIB to PNG...");
-    let png_data = convert_dib_to_png(&dib_data).context("Failed to convert image to PNG")?;
+    // Windows clipboard returns DIB format, needs conversion to PNG.
+    // Linux clipboard returns PNG directly via image/png MIME type.
+    #[cfg(windows)]
+    let png_data = {
+        log::info!("paste_image_to_ssh_inner: converting DIB to PNG...");
+        convert_dib_to_png(&clipboard_data).context("Failed to convert image to PNG")?
+    };
+    #[cfg(not(windows))]
+    let png_data = clipboard_data;
     log::info!(
-        "paste_image_to_ssh_inner: converted to {} bytes of PNG data",
+        "paste_image_to_ssh_inner: {} bytes of PNG data ready for upload",
         png_data.len()
     );
 
@@ -405,6 +412,7 @@ async fn paste_image_to_ssh_inner(
     Ok(())
 }
 
+#[cfg(windows)]
 fn convert_dib_to_png(dib_data: &[u8]) -> anyhow::Result<Vec<u8>> {
     // DIB data from clipboard is a BITMAPINFOHEADER followed by pixel data.
     // To make it a valid BMP file, we prepend a 14-byte BITMAPFILEHEADER.
@@ -602,6 +610,7 @@ mod tests {
         assert_eq!(target.identity_files, vec!["key1", "key2"]);
     }
 
+    #[cfg(windows)]
     /// Build a minimal 32-bit BITMAPINFOHEADER (40 bytes) + pixel data for a
     /// 2x2 BGRA image. This simulates what Windows puts on the clipboard as
     /// CF_DIB.
@@ -625,6 +634,7 @@ mod tests {
         dib
     }
 
+    #[cfg(windows)]
     /// Build a minimal 24-bit BITMAPINFOHEADER + pixel data.
     fn make_test_dib_24bpp(width: i32, height: i32, pixels: &[u8]) -> Vec<u8> {
         let mut dib = Vec::new();
@@ -643,6 +653,7 @@ mod tests {
         dib
     }
 
+    #[cfg(windows)]
     #[test]
     fn test_convert_dib_to_png_32bpp_2x2() {
         // 2x2 image, 32bpp BGRA, bottom-up (default BMP row order)
@@ -668,6 +679,7 @@ mod tests {
         assert_eq!(img.height(), 2);
     }
 
+    #[cfg(windows)]
     #[test]
     fn test_convert_dib_to_png_24bpp_1x1() {
         // 1x1 image, 24bpp BGR
@@ -684,6 +696,7 @@ mod tests {
         assert_eq!(img.height(), 1);
     }
 
+    #[cfg(windows)]
     #[test]
     fn test_convert_dib_to_png_empty_data() {
         let result = convert_dib_to_png(&[]);
@@ -692,6 +705,7 @@ mod tests {
         assert!(err_msg.contains("DIB data too short"), "got: {}", err_msg);
     }
 
+    #[cfg(windows)]
     #[test]
     fn test_convert_dib_to_png_truncated_header() {
         // Only 3 bytes — not enough for biSize
@@ -701,6 +715,7 @@ mod tests {
         assert!(err_msg.contains("DIB data too short"), "got: {}", err_msg);
     }
 
+    #[cfg(windows)]
     #[test]
     fn test_convert_dib_to_png_larger_image() {
         // 4x4 image, 32bpp — all red pixels

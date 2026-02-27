@@ -17,6 +17,7 @@ use super::state::WaylandState;
 
 pub(super) const TEXT_MIME_TYPE: &str = "text/plain;charset=utf-8";
 pub(super) const URI_MIME_TYPE: &str = "text/uri-list";
+pub(super) const IMAGE_PNG_MIME_TYPE: &str = "image/png";
 
 impl DataDeviceHandler for WaylandState {
     fn enter(

@@ -2,9 +2,12 @@
 
 *Since: nightly builds only*
 
-Reads an image from the Windows clipboard, converts it to PNG format, uploads
-it to the remote server via SFTP (or SCP as fallback), and pastes the remote
-file path into the current pane.
+Reads an image from the clipboard, uploads it to the remote server via SFTP
+(or SCP as fallback), and pastes the remote file path into the current pane.
+
+On Windows, the clipboard image is read as DIB format and converted to PNG.
+On Linux (X11 and Wayland), the clipboard image is read directly as PNG via
+the `image/png` MIME type.
 
 This action is designed for use when connected to a remote host via an SSH
 domain and you want to share a screenshot or clipboard image with a remote
@@ -17,7 +20,7 @@ The feature can be disabled via
 [ssh_image_paste_enabled](../config/ssh_image_paste_enabled.md).
 
 **Requirements:**
-* Windows only (other platforms will show a toast notification)
+* Windows or Linux (X11/Wayland)
 * The current pane must be connected via SSH (either an SSH domain or a
   detected `ssh` process)
 * The clipboard must contain image data

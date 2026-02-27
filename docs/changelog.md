@@ -72,7 +72,8 @@ As features stabilize some brief notes about them will accumulate here.
 * [PasteImageToSshUpload](config/lua/keyassignment/PasteImageToSshUpload.md)
   action to upload clipboard images to a remote SSH server via SFTP (or SCP
   fallback) and paste the remote file path into the terminal. Useful for
-  sharing screenshots with remote CLI tools like Claude Code. Windows only.
+  sharing screenshots with remote CLI tools like Claude Code. Supported on
+  Windows and Linux (X11/Wayland).
   See also [ssh_image_paste_remote_path](config/lua/config/ssh_image_paste_remote_path.md)
   and [ssh_image_paste_enabled](config/lua/config/ssh_image_paste_enabled.md).
 * [wezterm.serde](config/lua/wezterm.serde/index.md) module for serialization

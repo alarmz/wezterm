@@ -319,11 +319,11 @@ pub trait WindowOps {
     /// Set some text in the clipboard
     fn set_clipboard(&self, clipboard: Clipboard, text: String);
 
-    /// Retrieve image data from the clipboard as raw DIB bytes.
-    /// Only supported on Windows; other platforms return an error.
+    /// Retrieve image data from the clipboard.
+    /// On Windows, returns raw DIB bytes; on Linux, returns PNG bytes.
     fn get_clipboard_image_data(&self) -> Future<Vec<u8>> {
         Future::result(Err(anyhow::anyhow!(
-            "Clipboard image paste is only supported on Windows"
+            "Clipboard image paste is not supported on this platform"
         )))
     }
 
