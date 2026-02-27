@@ -38,23 +38,33 @@ impl TermWindow {
             ClipboardPasteSource::Clipboard => Clipboard::Clipboard,
             ClipboardPasteSource::PrimarySelection => Clipboard::PrimarySelection,
         };
-        let future = window.get_clipboard(clipboard);
+        let text_future = window.get_clipboard(clipboard);
+        let image_future = window.get_clipboard_image_data();
         promise::spawn::spawn(async move {
-            if let Ok(clip) = future.await {
-                window.notify(TermWindowNotif::Apply(Box::new(move |myself| {
-                    if let Some(pane) = myself
-                        .pane_state(pane_id)
-                        .overlay
-                        .as_ref()
-                        .map(|overlay| overlay.pane.clone())
-                        .or_else(|| {
-                            let mux = Mux::get();
-                            mux.get_pane(pane_id)
-                        })
+            match text_future.await {
+                Ok(clip) if !clip.is_empty() => {
+                    window.notify(TermWindowNotif::Apply(Box::new(move |myself| {
+                        if let Some(pane) = myself
+                            .pane_state(pane_id)
+                            .overlay
+                            .as_ref()
+                            .map(|overlay| overlay.pane.clone())
+                            .or_else(|| {
+                                let mux = Mux::get();
+                                mux.get_pane(pane_id)
+                            })
+                        {
+                            pane.send_paste(&clip).ok();
+                        }
+                    })));
+                }
+                _ => {
+                    // No text in clipboard; try image fallback
+                    if let Err(err) = paste_image_as_local_path_inner(image_future, pane_id).await
                     {
-                        pane.send_paste(&clip).ok();
+                        log::debug!("paste_from_clipboard: no text and image fallback failed: {:#}", err);
                     }
-                })));
+                }
             }
         })
         .detach();
@@ -97,6 +107,47 @@ impl TermWindow {
 
         self.maybe_scroll_to_bottom_for_input(&pane);
     }
+
+}
+
+async fn paste_image_as_local_path_inner(
+    future: promise::Future<Vec<u8>>,
+    pane_id: PaneId,
+) -> anyhow::Result<()> {
+    let clipboard_data = future.await.context("Failed to read clipboard image")?;
+
+    #[cfg(windows)]
+    let png_data = convert_dib_to_png(&clipboard_data).context("Failed to convert image to PNG")?;
+    #[cfg(not(windows))]
+    let png_data = clipboard_data;
+
+    let config = config::configuration();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let local_path = config
+        .image_paste_local_path
+        .replace("{timestamp}", &timestamp.to_string());
+
+    std::fs::write(&local_path, &png_data)
+        .with_context(|| format!("Failed to write image to '{}'", local_path))?;
+
+    let mux = Mux::get();
+    let pane = mux
+        .get_pane(pane_id)
+        .ok_or_else(|| anyhow::anyhow!("Pane not found for pane_id={}", pane_id))?;
+
+    pane.send_paste(&local_path)
+        .context("Failed to paste path into terminal")?;
+
+    log::debug!(
+        "paste_image_as_local_path: saved {} bytes to '{}' and pasted path",
+        png_data.len(),
+        local_path
+    );
+
+    Ok(())
 }
 
 /// Parsed SSH connection target detected from a running ssh process.

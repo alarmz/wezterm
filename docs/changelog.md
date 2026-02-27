@@ -79,6 +79,10 @@ As features stabilize some brief notes about them will accumulate here.
   installed and shows a warning notification if it is missing.
   See also [ssh_image_paste_remote_path](config/lua/config/ssh_image_paste_remote_path.md)
   and [ssh_image_paste_enabled](config/lua/config/ssh_image_paste_enabled.md).
+* `PasteFrom` (Cmd+V / Ctrl+Shift+V) now automatically falls back to saving
+  clipboard images as local files and pasting the file path when the clipboard
+  contains an image but no text. The local save path is configurable via
+  [image_paste_local_path](config/lua/config/image_paste_local_path.md).
 
 * [wezterm.serde](config/lua/wezterm.serde/index.md) module for serialization
   and deserialization of JSON, TOML and YAML. Thanks to @expnn! #4969
