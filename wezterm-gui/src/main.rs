@@ -851,13 +851,26 @@ fn maybe_show_configuration_error_window() {
 
 /// Check whether a command-line tool is available on the system PATH.
 fn has_tool(name: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(name)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    let extensions: Vec<String> = if cfg!(windows) {
+        std::env::var("PATHEXT")
+            .unwrap_or_default()
+            .split(';')
+            .map(|s| s.to_string())
+            .collect()
+    } else {
+        vec![String::new()]
+    };
+
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            for ext in &extensions {
+                if dir.join(format!("{}{}", name, ext)).is_file() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Return a warning message if the clipboard image tool required by the current
