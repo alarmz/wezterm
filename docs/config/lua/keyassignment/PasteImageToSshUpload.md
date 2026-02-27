@@ -26,6 +26,9 @@ The feature can be disabled via
 * The current pane must be connected via SSH (either an SSH domain or a
   detected `ssh` process)
 * The clipboard must contain image data
+* On Linux/FreeBSD: `xclip` or `xsel` (X11), or `wl-paste` from
+  `wl-clipboard` (Wayland) must be installed. WezTerm checks for these
+  tools at startup and shows a warning notification if they are missing.
 
 **Upload methods:**
 * **SFTP** — used when the pane belongs to a `RemoteSshDomain`

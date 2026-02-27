@@ -74,6 +74,9 @@ As features stabilize some brief notes about them will accumulate here.
   fallback) and paste the remote file path into the terminal. Useful for
   sharing screenshots with remote CLI tools like Claude Code. Supported on
   Windows, Linux (X11/Wayland), and macOS.
+  On Linux/FreeBSD, WezTerm now checks at startup whether the required
+  clipboard tool (`xclip`/`xsel` for X11, `wl-paste` for Wayland) is
+  installed and shows a warning notification if it is missing.
   See also [ssh_image_paste_remote_path](config/lua/config/ssh_image_paste_remote_path.md)
   and [ssh_image_paste_enabled](config/lua/config/ssh_image_paste_enabled.md).
 * [wezterm.serde](config/lua/wezterm.serde/index.md) module for serialization
