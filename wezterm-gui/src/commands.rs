@@ -665,10 +665,18 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
         PasteFrom(ClipboardPasteSource::Clipboard) => CommandDef {
             brief: "Paste from clipboard".into(),
             doc: "Pastes text from the clipboard".into(),
-            keys: vec![
-                (Modifiers::SUPER, "v".into()),
-                (Modifiers::NONE, "Paste".into()),
-            ],
+            keys: {
+                let mut keys = vec![
+                    (Modifiers::SUPER, "v".into()),
+                    (Modifiers::NONE, "Paste".into()),
+                ];
+                // On Windows and Linux, also bind Ctrl+V to smart paste.
+                // (On macOS, Ctrl+V is "verbatim insert" in terminals, so we
+                // leave it alone — Cmd+V already handles paste there.)
+                #[cfg(not(target_os = "macos"))]
+                keys.push((Modifiers::CTRL, "v".into()));
+                keys
+            },
             args: &[ArgType::ActivePane],
             menubar: &["Edit"],
             icon: Some("md_content_paste"),
