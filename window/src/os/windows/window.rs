@@ -756,8 +756,7 @@ impl HasWindowHandle for Window {
 }
 
 pub fn get_clipboard_image_data() -> anyhow::Result<Vec<u8>> {
-    use clipboard_win::formats;
-    use clipboard_win::raw;
+    use clipboard_win::{formats, raw};
 
     struct ClipboardGuard;
     impl Drop for ClipboardGuard {
