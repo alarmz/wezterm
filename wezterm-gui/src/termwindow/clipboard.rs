@@ -6,8 +6,8 @@ use mux::pane::{CachePolicy, Pane, PaneId};
 use mux::ssh::RemoteSshDomain;
 use mux::Mux;
 use std::sync::Arc;
-use window::{Clipboard, WindowOps};
 use wezterm_toast_notification::persistent_toast_notification;
+use window::{Clipboard, WindowOps};
 
 impl TermWindow {
     pub fn copy_to_clipboard(&self, clipboard: ClipboardCopyDestination, text: String) {
@@ -87,8 +87,7 @@ impl TermWindow {
         let future = window.get_clipboard_image_data();
 
         promise::spawn::spawn(async move {
-            if let Err(err) =
-                paste_image_to_ssh_inner(future, pane_id, domain_id, ssh_target).await
+            if let Err(err) = paste_image_to_ssh_inner(future, pane_id, domain_id, ssh_target).await
             {
                 log::error!("paste_image_to_ssh: {:#}", err);
                 persistent_toast_notification("Image Paste Failed", &format!("{:#}", err));
@@ -153,8 +152,8 @@ fn find_ssh_target_in_process_tree(info: &procinfo::LocalProcessInfo) -> Option<
 fn parse_ssh_target_from_argv(argv: &[String]) -> Option<SshTarget> {
     // SSH options that consume the next argument as their value
     const OPTS_WITH_ARG: &[&str] = &[
-        "-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J",
-        "-L", "-l", "-m", "-O", "-o", "-Q", "-R", "-S", "-W", "-w",
+        "-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J", "-L", "-l", "-m", "-O", "-o", "-Q",
+        "-R", "-S", "-W", "-w",
     ];
 
     let mut port: Option<u16> = None;
@@ -205,11 +204,7 @@ fn parse_ssh_target_from_argv(argv: &[String]) -> Option<SshTarget> {
 }
 
 /// Upload PNG data to the remote host via scp subprocess.
-fn upload_via_scp(
-    target: &SshTarget,
-    png_data: &[u8],
-    remote_path: &str,
-) -> anyhow::Result<()> {
+fn upload_via_scp(target: &SshTarget, png_data: &[u8], remote_path: &str) -> anyhow::Result<()> {
     // Save to local temp file
     let temp_dir = std::env::temp_dir();
     let local_filename = format!(
@@ -232,7 +227,7 @@ fn upload_via_scp(
     let remote_dest = format!("{}:{}", target.user_host, remote_path);
     let mut cmd = std::process::Command::new("scp");
     cmd.arg("-q"); // quiet mode
-    // BatchMode prevents interactive password/passphrase prompts (GUI dialogs on Windows)
+                   // BatchMode prevents interactive password/passphrase prompts (GUI dialogs on Windows)
     cmd.arg("-o").arg("BatchMode=yes");
     // Prevent stdin-based prompting and suppress console window on Windows
     cmd.stdin(std::process::Stdio::null());
@@ -259,7 +254,9 @@ fn upload_via_scp(
         .arg(&remote_dest);
 
     log::info!("upload_via_scp: running: {:?}", cmd);
-    let output = cmd.output().context("Failed to run scp command. Is scp installed?")?;
+    let output = cmd
+        .output()
+        .context("Failed to run scp command. Is scp installed?")?;
 
     // Always clean up the temp file
     let _ = std::fs::remove_file(&local_path);
@@ -440,14 +437,8 @@ fn convert_dib_to_png(dib_data: &[u8]) -> anyhow::Result<Vec<u8>> {
     // Compute color table size for <=8bpp images
     // BITMAPINFOHEADER: biBitCount at offset 14, biClrUsed at offset 32
     let color_table_size = if dib_data.len() >= 36 {
-        let bit_count =
-            u16::from_le_bytes([dib_data[14], dib_data[15]]);
-        let clr_used = u32::from_le_bytes([
-            dib_data[32],
-            dib_data[33],
-            dib_data[34],
-            dib_data[35],
-        ]);
+        let bit_count = u16::from_le_bytes([dib_data[14], dib_data[15]]);
+        let clr_used = u32::from_le_bytes([dib_data[32], dib_data[33], dib_data[34], dib_data[35]]);
         if bit_count <= 8 {
             let num_colors = if clr_used > 0 {
                 clr_used

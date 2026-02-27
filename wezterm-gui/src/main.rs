@@ -1387,8 +1387,8 @@ mod tests {
         #[test]
         fn test_wayland_warning_message_mentions_wl_paste() {
             if !has_tool("wl-paste") {
-                let msg = clipboard_tool_warning(true)
-                    .expect("should warn when wl-paste is missing");
+                let msg =
+                    clipboard_tool_warning(true).expect("should warn when wl-paste is missing");
                 assert!(
                     msg.contains("wl-paste"),
                     "warning should mention wl-paste, got: {}",
@@ -1405,8 +1405,8 @@ mod tests {
         #[test]
         fn test_x11_warning_message_mentions_xclip() {
             if !has_tool("xclip") && !has_tool("xsel") {
-                let msg = clipboard_tool_warning(false)
-                    .expect("should warn when xclip/xsel are missing");
+                let msg =
+                    clipboard_tool_warning(false).expect("should warn when xclip/xsel are missing");
                 assert!(
                     msg.contains("xclip"),
                     "warning should mention xclip, got: {}",

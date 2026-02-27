@@ -745,8 +745,8 @@ mod tests {
     fn test_paste_image_to_ssh_upload_roundtrip() {
         let action = KeyAssignment::PasteImageToSshUpload;
         let dynamic = action.to_dynamic();
-        let restored = KeyAssignment::from_dynamic(&dynamic, Default::default())
-            .expect("should deserialize");
+        let restored =
+            KeyAssignment::from_dynamic(&dynamic, Default::default()).expect("should deserialize");
         assert_eq!(restored, action);
     }
 

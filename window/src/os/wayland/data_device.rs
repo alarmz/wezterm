@@ -268,10 +268,7 @@ mod tests {
 
     #[test]
     fn test_reject_unsupported_mime_types() {
-        let mime_types = vec![
-            "text/html".to_string(),
-            "application/json".to_string(),
-        ];
+        let mime_types = vec!["text/html".to_string(), "application/json".to_string()];
         assert!(!has_accepted_mime_type(&mime_types));
     }
 

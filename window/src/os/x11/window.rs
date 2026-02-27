@@ -1067,9 +1067,7 @@ impl XWindowInner {
         if selection.target() == conn.atom_image_png {
             if let Some(mut promise) = self.copy_and_paste.image_request.take() {
                 if selection.property() == xcb::x::ATOM_NONE {
-                    log::trace!(
-                        "SEL: window_id={window_id:?} -> no image/png data available"
-                    );
+                    log::trace!("SEL: window_id={window_id:?} -> no image/png data available");
                     promise.err(anyhow!("No image data available in clipboard"));
                 } else {
                     match conn.send_and_wait_request(&xcb::x::GetProperty {
