@@ -12,13 +12,22 @@ User facing docs and guide at: https://wezterm.org/
 
 ## Highlight: Clipboard Image Paste over SSH
 
-**Paste screenshots directly into your remote SSH session with a single keystroke.**
+**Paste screenshots directly into your remote SSH session with a single keystroke — on Windows, Linux, and macOS.**
 
 When you're working on a remote server via SSH and need to share a screenshot
 or image with a CLI tool (such as [Claude Code](https://docs.anthropic.com/en/docs/claude-code)),
-WezTerm can read the image from your local Windows clipboard, convert it to
-PNG, upload it to the remote server via SFTP or SCP, and paste the remote file
-path into the terminal — all in one action.
+WezTerm can read the image from your clipboard, convert it to PNG, upload it
+to the remote server via SFTP or SCP, and paste the remote file path into the
+terminal — all in one action.
+
+### Supported Platforms
+
+| Platform | Clipboard Format | Notes |
+|----------|-----------------|-------|
+| **Windows** | DIB → PNG | Automatic conversion from Windows clipboard format |
+| **Linux (X11)** | PNG via `image/png` | Requires `xclip` or `xsel` |
+| **Linux (Wayland)** | PNG via `image/png` | Requires `wl-paste` (`wl-clipboard`) |
+| **macOS** | PNG or TIFF → PNG | Reads `public.png` first, falls back to `public.tiff` |
 
 ### Quick Setup
 
@@ -43,13 +52,19 @@ return {
 1. Copy or screenshot an image to your clipboard
 2. Press `Ctrl+V` (or your configured key) in an SSH pane
 3. WezTerm automatically:
-   - Reads the image from the Windows clipboard
-   - Converts it to PNG format
+   - Reads the image from your system clipboard
+   - Converts it to PNG format (if needed)
    - Uploads it to the remote server via SFTP (or SCP as fallback)
    - Pastes the remote file path (e.g. `/tmp/wezterm-paste-1709012345.png`)
 
 This is especially useful with AI coding assistants like Claude Code that can
 read images from file paths but cannot access your local clipboard over SSH.
+
+### Local Image Paste
+
+When pasting an image in a **local** (non-SSH) pane, WezTerm saves the image
+to a local file and pastes the path. Configure the path template with
+[`image_paste_local_path`](https://wezterm.org/config/lua/config/image_paste_local_path.html).
 
 See the full documentation:
 [PasteImageToSshUpload](https://wezterm.org/config/lua/keyassignment/PasteImageToSshUpload.html)
