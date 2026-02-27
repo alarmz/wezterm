@@ -2209,12 +2209,15 @@ impl WindowOps for XWindow {
             );
             inner.copy_and_paste.image_request.replace(promise);
             let conn = inner.conn();
+            // Use CURRENT_TIME instead of copy_and_paste.time because
+            // Mutter ignores ConvertSelection requests with a zero or
+            // stale timestamp (same issue noted in focus_window()).
             conn.send_request_no_reply_log(&xcb::x::ConvertSelection {
                 requestor: inner.window_id,
                 selection: conn.atom_clipboard,
                 target: conn.atom_image_png,
                 property: conn.atom_xsel_data,
-                time: inner.copy_and_paste.time,
+                time: xcb::x::CURRENT_TIME,
             });
             Ok(())
         });
