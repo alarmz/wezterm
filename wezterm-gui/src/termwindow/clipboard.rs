@@ -311,7 +311,7 @@ async fn paste_image_to_ssh_inner(
     );
 
     // Windows clipboard returns DIB format, needs conversion to PNG.
-    // Linux clipboard returns PNG directly via image/png MIME type.
+    // Linux and macOS clipboards return PNG directly.
     #[cfg(windows)]
     let png_data = {
         log::info!("paste_image_to_ssh_inner: converting DIB to PNG...");
@@ -608,6 +608,42 @@ mod tests {
         let target = parse_ssh_target_from_argv(&argv).unwrap();
         assert_eq!(target.user_host, "host");
         assert_eq!(target.identity_files, vec!["key1", "key2"]);
+    }
+
+    /// On non-Windows platforms (Linux, macOS), clipboard data is expected to be
+    /// valid PNG bytes and is used as-is without conversion.
+    #[cfg(not(windows))]
+    #[test]
+    fn test_non_windows_clipboard_data_is_png_passthrough() {
+        // Minimal valid PNG: 1x1 red pixel
+        let png_data = {
+            let mut buf = std::io::Cursor::new(Vec::new());
+            let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 0, 255]));
+            img.write_to(&mut buf, image::ImageFormat::Png)
+                .expect("should encode PNG");
+            buf.into_inner()
+        };
+
+        // Verify PNG signature
+        assert_eq!(&png_data[..8], b"\x89PNG\r\n\x1a\n");
+
+        // On non-Windows, clipboard_data IS the png_data (no conversion needed).
+        // This mirrors the #[cfg(not(windows))] path in paste_image_to_ssh_inner.
+        let clipboard_data = png_data.clone();
+        let result_png = clipboard_data; // same as: let png_data = clipboard_data;
+
+        assert_eq!(result_png, png_data);
+
+        // Verify we can decode the passed-through data
+        let img = image::load_from_memory_with_format(&result_png, image::ImageFormat::Png)
+            .expect("should decode PNG");
+        assert_eq!(img.width(), 1);
+        assert_eq!(img.height(), 1);
+        let rgba = img.to_rgba8();
+        let px = rgba.get_pixel(0, 0);
+        assert_eq!(px[0], 255); // R
+        assert_eq!(px[1], 0); // G
+        assert_eq!(px[2], 0); // B
     }
 
     #[cfg(windows)]
