@@ -1,7 +1,5 @@
 # Wez's Terminal
 
-[中文版 README](README.zh.md)
-
 <img height="128" alt="WezTerm Icon" src="https://raw.githubusercontent.com/wezterm/wezterm/main/assets/icon/wezterm-icon.svg" align="left"> *A GPU-accelerated cross-platform terminal emulator and multiplexer written by <a href="https://github.com/wez">@wez</a> and implemented in <a href="https://www.rust-lang.org/">Rust</a>*
 
 User facing docs and guide at: https://wezterm.org/
@@ -9,74 +7,6 @@ User facing docs and guide at: https://wezterm.org/
 ![Screenshot](docs/screenshots/two.png)
 
 *Screenshot of wezterm on macOS, running vim*
-
-## Highlight: Clipboard Image Paste over SSH
-
-**Paste screenshots directly into your remote SSH session with a single keystroke — on Windows, Linux, and macOS.**
-
-When you're working on a remote server via SSH and need to share a screenshot
-or image with a CLI tool (such as [Claude Code](https://docs.anthropic.com/en/docs/claude-code)),
-WezTerm can read the image from your clipboard, convert it to PNG, upload it
-to the remote server via SFTP or SCP, and paste the remote file path into the
-terminal — all in one action.
-
-### Supported Platforms
-
-| Platform | Clipboard Format | Notes |
-|----------|-----------------|-------|
-| **Windows** | DIB → PNG | Automatic conversion from Windows clipboard format |
-| **Linux (X11)** | PNG via `image/png` | Requires `xclip` or `xsel` |
-| **Linux (Wayland)** | PNG via `image/png` | Requires `wl-paste` (`wl-clipboard`) |
-| **macOS** | PNG or TIFF → PNG | Reads `public.png` first, falls back to `public.tiff` |
-
-### Quick Setup
-
-Ctrl+V is already the default smart paste keybinding on Windows and Linux.
-It automatically handles both text and images:
-
-* **Text in clipboard** → pastes text directly
-* **Image in clipboard + SSH pane** → uploads to remote server, pastes remote path
-* **Image in clipboard + local pane** → saves locally, pastes local file path
-
-To explicitly bind `PasteImageToSshUpload` (e.g. to a different key):
-
-```lua
-local wezterm = require 'wezterm'
-
-return {
-  keys = {
-    {
-      key = 'V',
-      mods = 'CTRL|SHIFT',
-      action = wezterm.action.PasteImageToSshUpload,
-    },
-  },
-}
-```
-
-### How It Works
-
-1. Copy or screenshot an image to your clipboard
-2. Press `Ctrl+V` (or your configured key) in any pane
-3. WezTerm automatically:
-   - Reads the image from your system clipboard
-   - Converts it to PNG format (if needed)
-   - **SSH pane**: Uploads to the remote server via SFTP (or SCP as fallback)
-     and pastes the remote file path (e.g. `/tmp/wezterm-paste-1709012345.png`)
-   - **Local pane**: Saves to a local file and pastes the local file path
-
-This is especially useful with AI coding assistants like Claude Code that can
-read images from file paths but cannot access your local clipboard over SSH.
-
-### Local Image Paste
-
-When pasting an image in a **local** (non-SSH) pane, WezTerm saves the image
-to a local file and pastes the path. The default save location is the
-platform's temporary directory. Configure the path template with
-[`image_paste_local_path`](https://wezterm.org/config/lua/config/image_paste_local_path.html).
-
-See the full documentation:
-[PasteImageToSshUpload](https://wezterm.org/config/lua/keyassignment/PasteImageToSshUpload.html)
 
 ## Installation
 

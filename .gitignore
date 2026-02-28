@@ -60,7 +60,6 @@ dhat-heap.json
 /wezterm-linuxbrew.rb
 /wezterm.rb
 /perf.data*
-.claude/
 .idea/
 /winget-pkgs
 /assets/flatpak/generated-sources.json
