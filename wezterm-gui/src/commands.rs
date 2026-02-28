@@ -2178,17 +2178,14 @@ mod tests {
         let assignments = CommandDef::default_key_assignments(&config);
         let paste_bindings: Vec<_> = assignments
             .iter()
-            .filter(|(_, _, action)| {
-                matches!(action, PasteFrom(ClipboardPasteSource::Clipboard))
-            })
+            .filter(|(_, _, action)| matches!(action, PasteFrom(ClipboardPasteSource::Clipboard)))
             .collect();
 
         // Super+V should always be bound (Cmd+V on macOS, Win+V on others)
         assert!(
             paste_bindings
                 .iter()
-                .any(|(mods, key, _)| *mods == Modifiers::SUPER
-                    && *key == KeyCode::Char('v')),
+                .any(|(mods, key, _)| *mods == Modifiers::SUPER && *key == KeyCode::Char('v')),
             "Expected Super+v binding for PasteFrom(Clipboard), found: {:?}",
             paste_bindings
         );
@@ -2200,17 +2197,14 @@ mod tests {
         let assignments = CommandDef::default_key_assignments(&config);
         let paste_bindings: Vec<_> = assignments
             .iter()
-            .filter(|(_, _, action)| {
-                matches!(action, PasteFrom(ClipboardPasteSource::Clipboard))
-            })
+            .filter(|(_, _, action)| matches!(action, PasteFrom(ClipboardPasteSource::Clipboard)))
             .collect();
 
         // Ctrl+Shift+V should be synthesized from Super+V on all platforms
         assert!(
-            paste_bindings
-                .iter()
-                .any(|(mods, key, _)| *mods == (Modifiers::CTRL | Modifiers::SHIFT)
-                    && *key == KeyCode::Char('v')),
+            paste_bindings.iter().any(|(mods, key, _)| *mods
+                == (Modifiers::CTRL | Modifiers::SHIFT)
+                && *key == KeyCode::Char('v')),
             "Expected Ctrl+Shift+v binding for PasteFrom(Clipboard), found: {:?}",
             paste_bindings
         );
@@ -2223,17 +2217,14 @@ mod tests {
         let assignments = CommandDef::default_key_assignments(&config);
         let paste_bindings: Vec<_> = assignments
             .iter()
-            .filter(|(_, _, action)| {
-                matches!(action, PasteFrom(ClipboardPasteSource::Clipboard))
-            })
+            .filter(|(_, _, action)| matches!(action, PasteFrom(ClipboardPasteSource::Clipboard)))
             .collect();
 
         // On Windows/Linux, Ctrl+V (lowercase) should be bound for smart paste
         assert!(
             paste_bindings
                 .iter()
-                .any(|(mods, key, _)| *mods == Modifiers::CTRL
-                    && *key == KeyCode::Char('v')),
+                .any(|(mods, key, _)| *mods == Modifiers::CTRL && *key == KeyCode::Char('v')),
             "Expected Ctrl+v binding for PasteFrom(Clipboard) on non-macOS, found: {:?}",
             paste_bindings
         );
@@ -2246,9 +2237,7 @@ mod tests {
         let assignments = CommandDef::default_key_assignments(&config);
         let paste_bindings: Vec<_> = assignments
             .iter()
-            .filter(|(_, _, action)| {
-                matches!(action, PasteFrom(ClipboardPasteSource::Clipboard))
-            })
+            .filter(|(_, _, action)| matches!(action, PasteFrom(ClipboardPasteSource::Clipboard)))
             .collect();
 
         // On macOS, plain Ctrl+V (lowercase) should NOT be bound
@@ -2256,8 +2245,7 @@ mod tests {
         assert!(
             !paste_bindings
                 .iter()
-                .any(|(mods, key, _)| *mods == Modifiers::CTRL
-                    && *key == KeyCode::Char('v')),
+                .any(|(mods, key, _)| *mods == Modifiers::CTRL && *key == KeyCode::Char('v')),
             "Ctrl+v should NOT be bound on macOS, but found it in: {:?}",
             paste_bindings
         );
@@ -2315,9 +2303,9 @@ mod tests {
             "Missing SUPER+v"
         );
         assert!(
-            permuted.iter().any(|(m, k)| *m
-                == (Modifiers::CTRL | Modifiers::SHIFT)
-                && *k == KeyCode::Char('v')),
+            permuted.iter().any(
+                |(m, k)| *m == (Modifiers::CTRL | Modifiers::SHIFT) && *k == KeyCode::Char('v')
+            ),
             "Missing CTRL+SHIFT+v"
         );
     }

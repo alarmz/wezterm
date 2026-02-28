@@ -84,10 +84,8 @@ impl TermWindow {
                              data, routing to SSH image upload",
                             image_data.len()
                         );
-                        match paste_image_to_ssh_inner(
-                            image_data, pane_id, domain_id, ssh_target,
-                        )
-                        .await
+                        match paste_image_to_ssh_inner(image_data, pane_id, domain_id, ssh_target)
+                            .await
                         {
                             Ok(()) => return,
                             Err(err) => {
@@ -199,7 +197,10 @@ impl TermWindow {
             let clipboard_data = match image_future.await {
                 Ok(data) => data,
                 Err(err) => {
-                    log::error!("paste_image_to_ssh: failed to read clipboard image: {:#}", err);
+                    log::error!(
+                        "paste_image_to_ssh: failed to read clipboard image: {:#}",
+                        err
+                    );
                     text_fallback_or_toast(
                         text_future,
                         pane_id,
@@ -216,12 +217,7 @@ impl TermWindow {
                         "paste_image_to_ssh: image failed ({:#}), trying text fallback",
                         err
                     );
-                    text_fallback_or_toast(
-                        text_future,
-                        pane_id,
-                        &format!("{:#}", err),
-                    )
-                    .await;
+                    text_fallback_or_toast(text_future, pane_id, &format!("{:#}", err)).await;
                 }
             }
         })
@@ -229,7 +225,6 @@ impl TermWindow {
 
         self.maybe_scroll_to_bottom_for_input(&pane);
     }
-
 }
 
 /// Try to paste clipboard text as a fallback. If no text is available,
@@ -1013,13 +1008,15 @@ mod tests {
         if let Some(parent) = std::path::Path::new(&local_path).parent() {
             std::fs::create_dir_all(parent)
                 .expect("should create parent directory for local image path");
-            assert!(parent.exists(), "parent directory should exist after creation");
+            assert!(
+                parent.exists(),
+                "parent directory should exist after creation"
+            );
         }
 
         // Write a small test file and verify
         let test_data = b"test image data";
-        std::fs::write(&local_path, test_data)
-            .expect("should write to local image path");
+        std::fs::write(&local_path, test_data).expect("should write to local image path");
         assert!(
             std::path::Path::new(&local_path).exists(),
             "written file should exist at '{}'",
@@ -1157,7 +1154,11 @@ mod tests {
     use std::path::PathBuf;
 
     /// Helper to build a LocalProcessInfo for tests.
-    fn make_proc(name: &str, argv: &[&str], children: Vec<procinfo::LocalProcessInfo>) -> procinfo::LocalProcessInfo {
+    fn make_proc(
+        name: &str,
+        argv: &[&str],
+        children: Vec<procinfo::LocalProcessInfo>,
+    ) -> procinfo::LocalProcessInfo {
         let mut child_map = HashMap::new();
         for (i, child) in children.into_iter().enumerate() {
             child_map.insert(child.pid, child);
@@ -1187,7 +1188,11 @@ mod tests {
 
     #[test]
     fn test_find_ssh_exe_in_direct_process() {
-        let proc = make_proc("ssh.exe", &["ssh.exe", "-p", "2222", "admin@server"], vec![]);
+        let proc = make_proc(
+            "ssh.exe",
+            &["ssh.exe", "-p", "2222", "admin@server"],
+            vec![],
+        );
         let target = find_ssh_target_in_process_tree(&proc).unwrap();
         assert_eq!(target.user_host, "admin@server");
         assert_eq!(target.port, Some(2222));
@@ -1237,7 +1242,16 @@ mod tests {
     fn test_find_ssh_with_full_options_in_child() {
         let ssh_child = make_proc(
             "ssh",
-            &["ssh", "-F", "/etc/ssh/config", "-o", "BatchMode=yes", "-p", "443", "deploy@prod"],
+            &[
+                "ssh",
+                "-F",
+                "/etc/ssh/config",
+                "-o",
+                "BatchMode=yes",
+                "-p",
+                "443",
+                "deploy@prod",
+            ],
             vec![],
         );
         let parent = make_proc("bash", &["bash"], vec![ssh_child]);
