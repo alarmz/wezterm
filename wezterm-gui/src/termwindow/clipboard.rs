@@ -38,36 +38,134 @@ impl TermWindow {
             ClipboardPasteSource::Clipboard => Clipboard::Clipboard,
             ClipboardPasteSource::PrimarySelection => Clipboard::PrimarySelection,
         };
-        let text_future = window.get_clipboard(clipboard);
+
+        // Auto-detect clipboard image for SSH panes:
+        // Only attempt when using Clipboard (not PrimarySelection), the feature
+        // is enabled, and the pane is in an SSH context.
+        let config = config::configuration();
+        let is_ssh_domain = {
+            let domain_id = pane.domain_id();
+            let mux = Mux::get();
+            mux.get_domain(domain_id)
+                .map(|d| d.downcast_ref::<RemoteSshDomain>().is_some())
+                .unwrap_or(false)
+        };
+        // Only pay the cost of process-tree walk when the feature is enabled
+        // and clipboard source could qualify. Capture ssh_target once to avoid
+        // a redundant second call.
+        let ssh_target = if config.ssh_image_paste_enabled
+            && clipboard == Clipboard::Clipboard
+            && !is_ssh_domain
+        {
+            detect_ssh_target_from_pane(pane)
+        } else {
+            None
+        };
+        let try_image_paste = should_try_image_paste(
+            config.ssh_image_paste_enabled,
+            clipboard,
+            is_ssh_domain,
+            ssh_target.is_some(),
+        );
+
+        // Capture values needed by the async block before moving into it
+        let domain_id = pane.domain_id();
         let image_future = window.get_clipboard_image_data();
+        let text_future = window.get_clipboard(clipboard);
+
         promise::spawn::spawn(async move {
-            match text_future.await {
-                Ok(clip) if !clip.is_empty() => {
-                    window.notify(TermWindowNotif::Apply(Box::new(move |myself| {
-                        if let Some(pane) = myself
-                            .pane_state(pane_id)
-                            .overlay
-                            .as_ref()
-                            .map(|overlay| overlay.pane.clone())
-                            .or_else(|| {
-                                let mux = Mux::get();
-                                mux.get_pane(pane_id)
-                            })
+            if try_image_paste {
+                // SSH image auto-detect path: try clipboard image for SSH
+                // upload first, fall back to text paste on failure.
+                match image_future.await {
+                    Ok(image_data) if !image_data.is_empty() => {
+                        log::info!(
+                            "paste_from_clipboard: auto-detected {} bytes of clipboard image \
+                             data, routing to SSH image upload",
+                            image_data.len()
+                        );
+                        match paste_image_to_ssh_inner(
+                            image_data, pane_id, domain_id, ssh_target,
+                        )
+                        .await
                         {
-                            pane.send_paste(&clip).ok();
+                            Ok(()) => return,
+                            Err(err) => {
+                                log::warn!(
+                                    "paste_from_clipboard: image upload failed, \
+                                     falling back to text paste: {:#}",
+                                    err
+                                );
+                            }
                         }
-                    })));
+                    }
+                    Ok(_) => {
+                        log::trace!(
+                            "paste_from_clipboard: no clipboard image data, using text paste"
+                        );
+                    }
+                    Err(err) => {
+                        log::trace!(
+                            "paste_from_clipboard: clipboard image not available: {:#}, \
+                             using text paste",
+                            err
+                        );
+                    }
                 }
-                _ => {
-                    // No text in clipboard; try image fallback
-                    if let Err(err) = paste_image_as_local_path_inner(image_future, pane_id).await
-                    {
-                        log::debug!("paste_from_clipboard: no text and image fallback failed: {:#}", err);
+                // Fall back to text paste
+                if let Ok(clip) = text_future.await {
+                    if !clip.is_empty() {
+                        window.notify(TermWindowNotif::Apply(Box::new(move |myself| {
+                            if let Some(pane) = myself
+                                .pane_state(pane_id)
+                                .overlay
+                                .as_ref()
+                                .map(|overlay| overlay.pane.clone())
+                                .or_else(|| {
+                                    let mux = Mux::get();
+                                    mux.get_pane(pane_id)
+                                })
+                            {
+                                pane.send_paste(&clip).ok();
+                            }
+                        })));
+                    }
+                }
+            } else {
+                // Non-SSH path: try text first, fall back to local image paste
+                match text_future.await {
+                    Ok(clip) if !clip.is_empty() => {
+                        window.notify(TermWindowNotif::Apply(Box::new(move |myself| {
+                            if let Some(pane) = myself
+                                .pane_state(pane_id)
+                                .overlay
+                                .as_ref()
+                                .map(|overlay| overlay.pane.clone())
+                                .or_else(|| {
+                                    let mux = Mux::get();
+                                    mux.get_pane(pane_id)
+                                })
+                            {
+                                pane.send_paste(&clip).ok();
+                            }
+                        })));
+                    }
+                    _ => {
+                        // No text in clipboard; try local image fallback
+                        if let Err(err) =
+                            paste_image_as_local_path_inner(image_future, pane_id).await
+                        {
+                            log::debug!(
+                                "paste_from_clipboard: no text and image fallback failed: {:#}",
+                                err
+                            );
+                        }
                     }
                 }
             }
         })
         .detach();
+
         self.maybe_scroll_to_bottom_for_input(&pane);
     }
 
@@ -98,10 +196,38 @@ impl TermWindow {
         let text_future = window.get_clipboard(Clipboard::Clipboard);
 
         promise::spawn::spawn(async move {
-            match paste_image_to_ssh_inner(image_future, pane_id, domain_id, ssh_target).await {
+            let clipboard_data = match image_future.await {
+                Ok(data) => data,
+                Err(err) => {
+                    log::error!("paste_image_to_ssh: failed to read clipboard image: {:#}", err);
+                    // Image read failed — try text as fallback
+                    match text_future.await {
+                        Ok(clip) if !clip.is_empty() => {
+                            let mux = Mux::get();
+                            if let Some(pane) = mux.get_pane(pane_id) {
+                                if let Err(e) = pane.send_paste(&clip) {
+                                    log::error!("paste_image_to_ssh: text fallback failed: {:#}", e);
+                                    persistent_toast_notification(
+                                        "Paste Failed",
+                                        &format!("{:#}", e),
+                                    );
+                                }
+                            }
+                        }
+                        _ => {
+                            persistent_toast_notification(
+                                "Image Paste Failed",
+                                &format!("Failed to read clipboard image: {:#}", err),
+                            );
+                        }
+                    }
+                    return;
+                }
+            };
+            match paste_image_to_ssh_inner(clipboard_data, pane_id, domain_id, ssh_target).await {
                 Ok(()) => {}
                 Err(err) => {
-                    // Image paste failed — try text as fallback
+                    // Image upload failed — try text as fallback
                     log::debug!(
                         "paste_image_to_ssh: image failed ({:#}), trying text fallback",
                         err
@@ -179,6 +305,22 @@ async fn paste_image_as_local_path_inner(
     );
 
     Ok(())
+}
+
+/// Determine whether `paste_from_clipboard` should attempt clipboard image
+/// detection and SSH upload before falling back to a plain text paste.
+///
+/// This is extracted as a pure function so it can be unit-tested independently
+/// of GUI / Mux / OS clipboard state.
+fn should_try_image_paste(
+    ssh_image_paste_enabled: bool,
+    clipboard: Clipboard,
+    is_ssh_domain: bool,
+    has_ssh_target: bool,
+) -> bool {
+    ssh_image_paste_enabled
+        && clipboard == Clipboard::Clipboard
+        && (is_ssh_domain || has_ssh_target)
 }
 
 /// Parsed SSH connection target detected from a running ssh process.
@@ -370,7 +512,7 @@ fn upload_via_scp(target: &SshTarget, png_data: &[u8], remote_path: &str) -> any
 }
 
 async fn paste_image_to_ssh_inner(
-    future: promise::Future<Vec<u8>>,
+    clipboard_data: Vec<u8>,
     pane_id: PaneId,
     domain_id: mux::domain::DomainId,
     ssh_target: Option<SshTarget>,
@@ -382,8 +524,6 @@ async fn paste_image_to_ssh_inner(
         ssh_target
     );
 
-    log::info!("paste_image_to_ssh_inner: reading clipboard image data...");
-    let clipboard_data = future.await.context("Failed to read clipboard image")?;
     log::info!(
         "paste_image_to_ssh_inner: got {} bytes of image data from clipboard",
         clipboard_data.len()
@@ -942,5 +1082,201 @@ mod tests {
             "remote path '{}' should use /tmp/ for remote servers",
             remote
         );
+    }
+
+    // --- should_try_image_paste routing decision tests ---
+    //
+    // The function is: enabled && clipboard==Clipboard && (is_ssh_domain || has_ssh_target)
+    // We test all meaningful combinations to guard against future regressions.
+
+    // Positive cases: should return true
+
+    #[test]
+    fn test_try_image_paste_ssh_domain_only() {
+        assert!(should_try_image_paste(
+            true,
+            Clipboard::Clipboard,
+            true,  // is_ssh_domain
+            false, // has_ssh_target
+        ));
+    }
+
+    #[test]
+    fn test_try_image_paste_ssh_target_only() {
+        assert!(should_try_image_paste(
+            true,
+            Clipboard::Clipboard,
+            false, // is_ssh_domain
+            true,  // has_ssh_target
+        ));
+    }
+
+    #[test]
+    fn test_try_image_paste_both_ssh_domain_and_target() {
+        assert!(should_try_image_paste(
+            true,
+            Clipboard::Clipboard,
+            true,
+            true,
+        ));
+    }
+
+    // Negative cases: each condition independently blocks the result
+
+    #[test]
+    fn test_try_image_paste_disabled_by_config_with_ssh_domain() {
+        assert!(!should_try_image_paste(
+            false, // disabled
+            Clipboard::Clipboard,
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn test_try_image_paste_disabled_by_config_with_ssh_target() {
+        assert!(!should_try_image_paste(
+            false, // disabled
+            Clipboard::Clipboard,
+            false,
+            true,
+        ));
+    }
+
+    #[test]
+    fn test_try_image_paste_primary_selection_with_ssh_domain() {
+        assert!(!should_try_image_paste(
+            true,
+            Clipboard::PrimarySelection,
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn test_try_image_paste_primary_selection_with_ssh_target() {
+        assert!(!should_try_image_paste(
+            true,
+            Clipboard::PrimarySelection,
+            false,
+            true,
+        ));
+    }
+
+    #[test]
+    fn test_try_image_paste_no_ssh_context() {
+        assert!(!should_try_image_paste(
+            true,
+            Clipboard::Clipboard,
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn test_try_image_paste_all_false() {
+        assert!(!should_try_image_paste(
+            false,
+            Clipboard::PrimarySelection,
+            false,
+            false,
+        ));
+    }
+
+    // --- find_ssh_target_in_process_tree tests ---
+
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    /// Helper to build a LocalProcessInfo for tests.
+    fn make_proc(name: &str, argv: &[&str], children: Vec<procinfo::LocalProcessInfo>) -> procinfo::LocalProcessInfo {
+        let mut child_map = HashMap::new();
+        for (i, child) in children.into_iter().enumerate() {
+            child_map.insert(child.pid, child);
+            let _ = i; // suppress unused warning
+        }
+        procinfo::LocalProcessInfo {
+            pid: 1000,
+            ppid: 1,
+            name: name.to_string(),
+            executable: PathBuf::from(name),
+            argv: argv.iter().map(|s| s.to_string()).collect(),
+            cwd: PathBuf::new(),
+            status: procinfo::LocalProcessStatus::Run,
+            start_time: 0,
+            #[cfg(windows)]
+            console: 0,
+            children: child_map,
+        }
+    }
+
+    #[test]
+    fn test_find_ssh_in_direct_process() {
+        let proc = make_proc("ssh", &["ssh", "user@host"], vec![]);
+        let target = find_ssh_target_in_process_tree(&proc).unwrap();
+        assert_eq!(target.user_host, "user@host");
+    }
+
+    #[test]
+    fn test_find_ssh_exe_in_direct_process() {
+        let proc = make_proc("ssh.exe", &["ssh.exe", "-p", "2222", "admin@server"], vec![]);
+        let target = find_ssh_target_in_process_tree(&proc).unwrap();
+        assert_eq!(target.user_host, "admin@server");
+        assert_eq!(target.port, Some(2222));
+    }
+
+    #[test]
+    fn test_find_ssh_in_child_process() {
+        let ssh_child = make_proc("ssh", &["ssh", "-i", "key", "user@remote"], vec![]);
+        let parent = make_proc("bash", &["bash"], vec![ssh_child]);
+        let target = find_ssh_target_in_process_tree(&parent).unwrap();
+        assert_eq!(target.user_host, "user@remote");
+        assert_eq!(target.identity_files, vec!["key"]);
+    }
+
+    #[test]
+    fn test_find_ssh_in_grandchild_process() {
+        let ssh_proc = make_proc("ssh", &["ssh", "deep@host"], vec![]);
+        let mid = make_proc("wrapper", &["wrapper"], vec![ssh_proc]);
+        let root = make_proc("bash", &["bash"], vec![mid]);
+        let target = find_ssh_target_in_process_tree(&root).unwrap();
+        assert_eq!(target.user_host, "deep@host");
+    }
+
+    #[test]
+    fn test_find_ssh_no_ssh_in_tree() {
+        let child = make_proc("vim", &["vim", "file.txt"], vec![]);
+        let parent = make_proc("bash", &["bash"], vec![child]);
+        assert!(find_ssh_target_in_process_tree(&parent).is_none());
+    }
+
+    #[test]
+    fn test_find_ssh_process_named_ssh_but_no_destination() {
+        // ssh process with only flags, no destination
+        let proc = make_proc("ssh", &["ssh", "-v", "-N"], vec![]);
+        assert!(find_ssh_target_in_process_tree(&proc).is_none());
+    }
+
+    #[test]
+    fn test_find_ssh_case_insensitive_name() {
+        // The function lowercases the name, so "SSH" should match
+        let proc = make_proc("SSH", &["SSH", "user@host"], vec![]);
+        let target = find_ssh_target_in_process_tree(&proc).unwrap();
+        assert_eq!(target.user_host, "user@host");
+    }
+
+    #[test]
+    fn test_find_ssh_with_full_options_in_child() {
+        let ssh_child = make_proc(
+            "ssh",
+            &["ssh", "-F", "/etc/ssh/config", "-o", "BatchMode=yes", "-p", "443", "deploy@prod"],
+            vec![],
+        );
+        let parent = make_proc("bash", &["bash"], vec![ssh_child]);
+        let target = find_ssh_target_in_process_tree(&parent).unwrap();
+        assert_eq!(target.user_host, "deploy@prod");
+        assert_eq!(target.port, Some(443));
+        assert_eq!(target.config_file, Some("/etc/ssh/config".into()));
+        assert_eq!(target.extra_options, vec!["BatchMode=yes"]);
     }
 }
