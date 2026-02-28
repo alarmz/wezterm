@@ -31,7 +31,14 @@ terminal — all in one action.
 
 ### Quick Setup
 
-Add this to your `~/.wezterm.lua`:
+Ctrl+V is already the default smart paste keybinding on Windows and Linux.
+It automatically handles both text and images:
+
+* **Text in clipboard** → pastes text directly
+* **Image in clipboard + SSH pane** → uploads to remote server, pastes remote path
+* **Image in clipboard + local pane** → saves locally, pastes local file path
+
+To explicitly bind `PasteImageToSshUpload` (e.g. to a different key):
 
 ```lua
 local wezterm = require 'wezterm'
@@ -39,8 +46,8 @@ local wezterm = require 'wezterm'
 return {
   keys = {
     {
-      key = 'v',
-      mods = 'CTRL',
+      key = 'V',
+      mods = 'CTRL|SHIFT',
       action = wezterm.action.PasteImageToSshUpload,
     },
   },
@@ -50,12 +57,13 @@ return {
 ### How It Works
 
 1. Copy or screenshot an image to your clipboard
-2. Press `Ctrl+V` (or your configured key) in an SSH pane
+2. Press `Ctrl+V` (or your configured key) in any pane
 3. WezTerm automatically:
    - Reads the image from your system clipboard
    - Converts it to PNG format (if needed)
-   - Uploads it to the remote server via SFTP (or SCP as fallback)
-   - Pastes the remote file path (e.g. `/tmp/wezterm-paste-1709012345.png`)
+   - **SSH pane**: Uploads to the remote server via SFTP (or SCP as fallback)
+     and pastes the remote file path (e.g. `/tmp/wezterm-paste-1709012345.png`)
+   - **Local pane**: Saves to a local file and pastes the local file path
 
 This is especially useful with AI coding assistants like Claude Code that can
 read images from file paths but cannot access your local clipboard over SSH.
@@ -63,7 +71,8 @@ read images from file paths but cannot access your local clipboard over SSH.
 ### Local Image Paste
 
 When pasting an image in a **local** (non-SSH) pane, WezTerm saves the image
-to a local file and pastes the path. Configure the path template with
+to a local file and pastes the path. The default save location is the
+platform's temporary directory. Configure the path template with
 [`image_paste_local_path`](https://wezterm.org/config/lua/config/image_paste_local_path.html).
 
 See the full documentation:

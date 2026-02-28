@@ -30,7 +30,13 @@
 
 ### 快速設定
 
-在 `~/.wezterm.lua` 加入以下設定:
+在 Windows 和 Linux 上，Ctrl+V 已是預設的智慧貼上快捷鍵，自動處理文字和圖片：
+
+* **剪貼簿有文字** → 直接貼上文字
+* **剪貼簿有圖片 + SSH 分頁** → 上傳到遠端伺服器，貼上遠端路徑
+* **剪貼簿有圖片 + 本機分頁** → 儲存到本機檔案，貼上本機路徑
+
+若要將 `PasteImageToSshUpload` 綁定到其他按鍵：
 
 ```lua
 local wezterm = require 'wezterm'
@@ -38,8 +44,8 @@ local wezterm = require 'wezterm'
 return {
   keys = {
     {
-      key = 'v',
-      mods = 'CTRL',
+      key = 'V',
+      mods = 'CTRL|SHIFT',
       action = wezterm.action.PasteImageToSshUpload,
     },
   },
@@ -49,12 +55,13 @@ return {
 ### 運作方式
 
 1. 複製或截取一張圖片到剪貼簿
-2. 在 SSH 分頁中按下 `Ctrl+V`（或你設定的快捷鍵）
+2. 在任意分頁中按下 `Ctrl+V`（或你設定的快捷鍵）
 3. WezTerm 自動執行以下步驟:
    - 從系統剪貼簿讀取圖片
    - 轉換為 PNG 格式（如有需要）
-   - 透過 SFTP（或 SCP 備援）上傳到遠端伺服器
-   - 將遠端檔案路徑（例如 `/tmp/wezterm-paste-1709012345.png`）貼入終端
+   - **SSH 分頁**: 透過 SFTP（或 SCP 備援）上傳到遠端伺服器，
+     將遠端檔案路徑（例如 `/tmp/wezterm-paste-1709012345.png`）貼入終端
+   - **本機分頁**: 儲存到本機檔案，將本機檔案路徑貼入終端
 
 這對使用 AI 程式助手（如 Claude Code）特別實用 — 它們可以從檔案路徑讀取圖片，
 但無法透過 SSH 存取你的本機剪貼簿。
@@ -62,6 +69,7 @@ return {
 ### 本機圖片貼上
 
 在**本機**（非 SSH）分頁中貼上圖片時，WezTerm 會將圖片儲存為本機檔案並貼上路徑。
+預設儲存位置為平台的臨時目錄（Windows 為 `%TEMP%`，Linux/macOS 為 `/tmp/`）。
 可透過 [`image_paste_local_path`](https://wezterm.org/config/lua/config/image_paste_local_path.html) 自訂儲存路徑。
 
 ### 進階設定
@@ -71,8 +79,8 @@ return {
   -- 自訂遠端儲存路徑（{timestamp} 會替換為 Unix 時間戳）
   ssh_image_paste_remote_path = '/tmp/wezterm-paste-{timestamp}.png',
 
-  -- 自訂本機儲存路徑
-  image_paste_local_path = '/tmp/wezterm-paste-{timestamp}.png',
+  -- 自訂本機儲存路徑（預設使用平台臨時目錄）
+  image_paste_local_path = '/home/user/screenshots/wezterm-paste-{timestamp}.png',
 
   -- 停用 SSH 圖片貼上功能
   -- ssh_image_paste_enabled = false,

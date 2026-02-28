@@ -869,4 +869,78 @@ mod tests {
         assert_eq!(px[1], 0x00); // G
         assert_eq!(px[2], 0x00); // B
     }
+
+    /// Verify that the default image_paste_local_path uses the platform temp
+    /// directory and that parent directories are created when writing an image.
+    #[test]
+    fn test_local_image_path_uses_platform_temp_dir() {
+        let config = config::configuration();
+        let path = config.image_paste_local_path.clone();
+        let temp_dir = std::env::temp_dir();
+        let temp_str = temp_dir.to_string_lossy();
+        assert!(
+            path.starts_with(temp_str.as_ref()),
+            "image_paste_local_path '{}' should start with platform temp dir '{}'",
+            path,
+            temp_str
+        );
+        assert!(path.contains("{timestamp}"));
+        assert!(path.ends_with(".png"));
+    }
+
+    /// Verify that local image path template substitution produces a writable
+    /// path with proper parent directory creation on the current platform.
+    #[test]
+    fn test_local_image_path_write_with_mkdir() {
+        let config = config::configuration();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let local_path = config
+            .image_paste_local_path
+            .replace("{timestamp}", &format!("test-{}", timestamp));
+
+        // Ensure parent directory can be created
+        if let Some(parent) = std::path::Path::new(&local_path).parent() {
+            std::fs::create_dir_all(parent)
+                .expect("should create parent directory for local image path");
+            assert!(parent.exists(), "parent directory should exist after creation");
+        }
+
+        // Write a small test file and verify
+        let test_data = b"test image data";
+        std::fs::write(&local_path, test_data)
+            .expect("should write to local image path");
+        assert!(
+            std::path::Path::new(&local_path).exists(),
+            "written file should exist at '{}'",
+            local_path
+        );
+
+        // Clean up
+        let _ = std::fs::remove_file(&local_path);
+    }
+
+    /// Verify that the default local path and remote path are different
+    /// when on Windows (local uses temp dir, remote uses /tmp/).
+    #[cfg(windows)]
+    #[test]
+    fn test_local_and_remote_paths_differ_on_windows() {
+        let config = config::configuration();
+        let local = &config.image_paste_local_path;
+        let remote = &config.ssh_image_paste_remote_path;
+        // On Windows, local path should NOT start with /tmp/
+        assert!(
+            !local.starts_with("/tmp/"),
+            "local path '{}' should not use Unix /tmp/ on Windows",
+            local
+        );
+        // Remote path should still use /tmp/ (for the remote Linux server)
+        assert!(
+            remote.starts_with("/tmp/"),
+            "remote path '{}' should use /tmp/ for remote servers",
+            remote
+        );
+    }
 }

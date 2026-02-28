@@ -83,6 +83,13 @@ As features stabilize some brief notes about them will accumulate here.
   clipboard images as local files and pasting the file path when the clipboard
   contains an image but no text. The local save path is configurable via
   [image_paste_local_path](config/lua/config/image_paste_local_path.md).
+* `PasteImageToSshUpload` now gracefully handles local (non-SSH) panes: when
+  no SSH session is detected, it falls back to saving the image locally and
+  pasting the file path (instead of showing an error). It also falls back to
+  pasting clipboard text when no image is available.
+* [image_paste_local_path](config/lua/config/image_paste_local_path.md) now
+  defaults to the platform temp directory (e.g. `%TEMP%` on Windows) instead
+  of hardcoded `/tmp/`. Parent directories are created automatically.
 
 * [wezterm.serde](config/lua/wezterm.serde/index.md) module for serialization
   and deserialization of JSON, TOML and YAML. Thanks to @expnn! #4969
