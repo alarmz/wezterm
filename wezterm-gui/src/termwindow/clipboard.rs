@@ -94,13 +94,40 @@ impl TermWindow {
         );
 
         let window = self.window.as_ref().unwrap().clone();
-        let future = window.get_clipboard_image_data();
+        let image_future = window.get_clipboard_image_data();
+        let text_future = window.get_clipboard(Clipboard::Clipboard);
 
         promise::spawn::spawn(async move {
-            if let Err(err) = paste_image_to_ssh_inner(future, pane_id, domain_id, ssh_target).await
-            {
-                log::error!("paste_image_to_ssh: {:#}", err);
-                persistent_toast_notification("Image Paste Failed", &format!("{:#}", err));
+            match paste_image_to_ssh_inner(image_future, pane_id, domain_id, ssh_target).await {
+                Ok(()) => {}
+                Err(err) => {
+                    // Image paste failed — try text as fallback
+                    log::debug!(
+                        "paste_image_to_ssh: image failed ({:#}), trying text fallback",
+                        err
+                    );
+                    match text_future.await {
+                        Ok(clip) if !clip.is_empty() => {
+                            let mux = Mux::get();
+                            if let Some(pane) = mux.get_pane(pane_id) {
+                                if let Err(e) = pane.send_paste(&clip) {
+                                    log::error!("paste_image_to_ssh: text fallback failed: {:#}", e);
+                                    persistent_toast_notification(
+                                        "Paste Failed",
+                                        &format!("{:#}", e),
+                                    );
+                                }
+                            }
+                        }
+                        _ => {
+                            log::error!("paste_image_to_ssh: {:#}", err);
+                            persistent_toast_notification(
+                                "Image Paste Failed",
+                                &format!("{:#}", err),
+                            );
+                        }
+                    }
+                }
             }
         })
         .detach();
@@ -130,6 +157,10 @@ async fn paste_image_as_local_path_inner(
         .image_paste_local_path
         .replace("{timestamp}", &timestamp.to_string());
 
+    if let Some(parent) = std::path::Path::new(&local_path).parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory '{}'", parent.display()))?;
+    }
     std::fs::write(&local_path, &png_data)
         .with_context(|| format!("Failed to write image to '{}'", local_path))?;
 
@@ -436,12 +467,36 @@ async fn paste_image_to_ssh_inner(
             .await
             .context("SCP upload failed")?;
     } else {
-        anyhow::bail!(
-            "Cannot upload image: domain '{}' is not a direct SSH session, \
-             and no ssh process was detected in the current pane. \
-             Please ensure you have an active SSH connection in this pane.",
+        // Not an SSH session — fall back to saving image locally
+        log::info!(
+            "paste_image_to_ssh_inner: domain '{}' is not SSH, falling back to local save",
             domain_name
         );
+
+        let config = config::configuration();
+        let local_path = config
+            .image_paste_local_path
+            .replace("{timestamp}", &timestamp.to_string());
+
+        if let Some(parent) = std::path::Path::new(&local_path).parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory '{}'", parent.display()))?;
+        }
+        std::fs::write(&local_path, &png_data)
+            .with_context(|| format!("Failed to write image to '{}'", local_path))?;
+
+        let pane = mux
+            .get_pane(pane_id)
+            .ok_or_else(|| anyhow::anyhow!("Pane not found for pane_id={}", pane_id))?;
+        pane.send_paste(&local_path)
+            .context("Failed to paste path into terminal")?;
+
+        log::info!(
+            "paste_image_to_ssh_inner: saved {} bytes to '{}' and pasted path (local fallback)",
+            png_data.len(),
+            local_path
+        );
+        return Ok(());
     }
 
     // Paste the remote path into the terminal
