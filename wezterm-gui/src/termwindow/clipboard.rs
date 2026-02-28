@@ -200,59 +200,28 @@ impl TermWindow {
                 Ok(data) => data,
                 Err(err) => {
                     log::error!("paste_image_to_ssh: failed to read clipboard image: {:#}", err);
-                    // Image read failed — try text as fallback
-                    match text_future.await {
-                        Ok(clip) if !clip.is_empty() => {
-                            let mux = Mux::get();
-                            if let Some(pane) = mux.get_pane(pane_id) {
-                                if let Err(e) = pane.send_paste(&clip) {
-                                    log::error!("paste_image_to_ssh: text fallback failed: {:#}", e);
-                                    persistent_toast_notification(
-                                        "Paste Failed",
-                                        &format!("{:#}", e),
-                                    );
-                                }
-                            }
-                        }
-                        _ => {
-                            persistent_toast_notification(
-                                "Image Paste Failed",
-                                &format!("Failed to read clipboard image: {:#}", err),
-                            );
-                        }
-                    }
+                    text_fallback_or_toast(
+                        text_future,
+                        pane_id,
+                        &format!("Failed to read clipboard image: {:#}", err),
+                    )
+                    .await;
                     return;
                 }
             };
             match paste_image_to_ssh_inner(clipboard_data, pane_id, domain_id, ssh_target).await {
                 Ok(()) => {}
                 Err(err) => {
-                    // Image upload failed — try text as fallback
                     log::debug!(
                         "paste_image_to_ssh: image failed ({:#}), trying text fallback",
                         err
                     );
-                    match text_future.await {
-                        Ok(clip) if !clip.is_empty() => {
-                            let mux = Mux::get();
-                            if let Some(pane) = mux.get_pane(pane_id) {
-                                if let Err(e) = pane.send_paste(&clip) {
-                                    log::error!("paste_image_to_ssh: text fallback failed: {:#}", e);
-                                    persistent_toast_notification(
-                                        "Paste Failed",
-                                        &format!("{:#}", e),
-                                    );
-                                }
-                            }
-                        }
-                        _ => {
-                            log::error!("paste_image_to_ssh: {:#}", err);
-                            persistent_toast_notification(
-                                "Image Paste Failed",
-                                &format!("{:#}", err),
-                            );
-                        }
-                    }
+                    text_fallback_or_toast(
+                        text_future,
+                        pane_id,
+                        &format!("{:#}", err),
+                    )
+                    .await;
                 }
             }
         })
@@ -261,6 +230,29 @@ impl TermWindow {
         self.maybe_scroll_to_bottom_for_input(&pane);
     }
 
+}
+
+/// Try to paste clipboard text as a fallback. If no text is available,
+/// show a toast notification with `image_err_msg`.
+async fn text_fallback_or_toast(
+    text_future: promise::Future<String>,
+    pane_id: PaneId,
+    image_err_msg: &str,
+) {
+    match text_future.await {
+        Ok(clip) if !clip.is_empty() => {
+            let mux = Mux::get();
+            if let Some(pane) = mux.get_pane(pane_id) {
+                if let Err(e) = pane.send_paste(&clip) {
+                    log::error!("text fallback paste failed: {:#}", e);
+                    persistent_toast_notification("Paste Failed", &format!("{:#}", e));
+                }
+            }
+        }
+        _ => {
+            persistent_toast_notification("Image Paste Failed", image_err_msg);
+        }
+    }
 }
 
 async fn paste_image_as_local_path_inner(
@@ -607,36 +599,12 @@ async fn paste_image_to_ssh_inner(
             .await
             .context("SCP upload failed")?;
     } else {
-        // Not an SSH session — fall back to saving image locally
-        log::info!(
-            "paste_image_to_ssh_inner: domain '{}' is not SSH, falling back to local save",
+        anyhow::bail!(
+            "Cannot upload image: domain '{}' is not a direct SSH session, \
+             and no ssh process was detected in the current pane. \
+             Please ensure you have an active SSH connection in this pane.",
             domain_name
         );
-
-        let config = config::configuration();
-        let local_path = config
-            .image_paste_local_path
-            .replace("{timestamp}", &timestamp.to_string());
-
-        if let Some(parent) = std::path::Path::new(&local_path).parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory '{}'", parent.display()))?;
-        }
-        std::fs::write(&local_path, &png_data)
-            .with_context(|| format!("Failed to write image to '{}'", local_path))?;
-
-        let pane = mux
-            .get_pane(pane_id)
-            .ok_or_else(|| anyhow::anyhow!("Pane not found for pane_id={}", pane_id))?;
-        pane.send_paste(&local_path)
-            .context("Failed to paste path into terminal")?;
-
-        log::info!(
-            "paste_image_to_ssh_inner: saved {} bytes to '{}' and pasted path (local fallback)",
-            png_data.len(),
-            local_path
-        );
-        return Ok(());
     }
 
     // Paste the remote path into the terminal
